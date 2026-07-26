@@ -682,6 +682,8 @@ function mondayUpdateIntent(
   const combined = `${recentUserText} ${normalized}`;
   const currentMentionsAgreement = normalized.includes("agreement");
   const contextMentionsAgreement = combined.includes("agreement");
+  const currentMentionsSigned = /\b(signed|sign(?:ed|ature)?|closed won|won)\b/.test(normalized);
+  const contextMentionsSigned = /\b(signed|sign(?:ed|ature)?|closed won|won)\b/.test(combined);
   const currentMentionsLost = /\blost\b/.test(normalized);
   const contextMentionsLost = /\blost\b/.test(combined);
   const currentMentionsMeetingBooked =
@@ -698,7 +700,7 @@ function mondayUpdateIntent(
 
   if (!isUpdate) return null;
 
-  if (currentMentionsLost || (!currentMentionsAgreement && !currentMentionsMeetingBooked && contextMentionsLost)) {
+  if (currentMentionsLost || (!currentMentionsAgreement && !currentMentionsMeetingBooked && !currentMentionsSigned && contextMentionsLost)) {
     return {
       kind: "lost",
       description: "moved Final verdict to Lost",
@@ -706,7 +708,15 @@ function mondayUpdateIntent(
     };
   }
 
-  if (currentMentionsAgreement || (!currentMentionsMeetingBooked && contextMentionsAgreement)) {
+  if (currentMentionsSigned || (!currentMentionsAgreement && !currentMentionsMeetingBooked && contextMentionsSigned)) {
+    return {
+      kind: "signed-stage",
+      description: "moved Final verdict to Signed",
+      confirmationText: "move Final verdict to Signed in monday",
+    };
+  }
+
+  if (currentMentionsAgreement || (!currentMentionsMeetingBooked && !currentMentionsSigned && contextMentionsAgreement)) {
     return {
       kind: "agreement-stage",
       description: "moved Final verdict to Agreement Stage",
@@ -756,7 +766,12 @@ function columnValuesForUpdateIntent(
 
   return {
     [finalVerdictColumnIdFor(deal)]: {
-      label: updateIntent.kind === "lost" ? "Lost" : "Agreement Stage",
+      label:
+        updateIntent.kind === "lost"
+          ? "Lost"
+          : updateIntent.kind === "signed-stage"
+            ? "Signed"
+            : "Agreement Stage",
     },
   };
 }
