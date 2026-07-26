@@ -100,10 +100,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, ignored: "non-text-message" });
   }
 
-  if (!shouldAnswerLarkMessage(message)) {
-    return NextResponse.json({ ok: true, ignored: "group-message-without-mention" });
-  }
-
   const isFirstDelivery = await registerLarkMessageDelivery(messageId);
 
   if (!isFirstDelivery) {
@@ -111,6 +107,17 @@ export async function POST(request: NextRequest) {
   }
 
   const question = parseTextContent(message.content);
+
+  if (!shouldAnswerLarkMessage(message)) {
+    await maybeHandlePassiveGroupInsight({
+      question,
+      message,
+      sender: payload.event?.sender,
+    });
+
+    return NextResponse.json({ ok: true, ignored: "group-message-without-mention" });
+  }
+
   const threadId = conversationThreadId(message);
   const conversation = await getConversationMemory(threadId);
   const boardData = await loadSalesBoardDeals(question);
@@ -315,6 +322,121 @@ async function notifyDmMonitor({
 function truncateForMonitor(text: string) {
   const normalized = text.replace(/\s+/g, " ").trim();
   return normalized.length > 1200 ? `${normalized.slice(0, 1197)}...` : normalized;
+}
+
+async function maybeHandlePassiveGroupInsight({
+  question,
+  message,
+  sender,
+}: {
+  question: string;
+  message: NonNullable<LarkEventPayload["event"]>["message"];
+  sender?: NonNullable<LarkEventPayload["event"]>["sender"];
+}) {
+  if (!isGroupChat(message?.chat_type) || isBotMentioned(message)) return;
+  if (!isPassiveSalesInsight(question)) return;
+
+  const threadId = conversationThreadId(message);
+  const note = extractSalesMemoryNote(question) || question;
+  const memory = await getLatestSalesMemory();
+  const matches = memory?.deals.length
+    ? findDealMatches({ question, conversation: [], deals: memory.deals }).slice(0, 2)
+    : [];
+  const deal = matches.length === 1 ? matches[0] : null;
+
+  await appendSalesContextNote({
+    threadId,
+    source: "lark-passive",
+    rawText: question,
+    note,
+    ...(deal
+      ? {
+          account: deal.account,
+          itemId: deal.id,
+          email: deal.email,
+        }
+      : {}),
+  });
+
+  await notifyPassiveGroupInsight({
+    message,
+    sender,
+    question,
+    deal,
+    hadMultipleMatches: matches.length > 1,
+  });
+}
+
+async function notifyPassiveGroupInsight({
+  message,
+  sender,
+  question,
+  deal,
+  hadMultipleMatches,
+}: {
+  message: NonNullable<LarkEventPayload["event"]>["message"];
+  sender?: NonNullable<LarkEventPayload["event"]>["sender"];
+  question: string;
+  deal: SalesDeal | null;
+  hadMultipleMatches: boolean;
+}) {
+  const monitorChatId =
+    process.env.LARK_DM_MONITOR_CHAT_ID ||
+    process.env.LARK_SALES_REPORT_CHAT_ID ||
+    process.env.LARK_SALES_CHAT_ID;
+
+  if (!monitorChatId || monitorChatId === message?.chat_id) return;
+
+  const senderId =
+    sender?.sender_id?.user_id ||
+    sender?.sender_id?.open_id ||
+    sender?.sender_id?.union_id ||
+    "unknown sender";
+  const matchText = deal
+    ? `Matched CRM record: ${formatSelectedDeal(deal)}`
+    : hadMultipleMatches
+      ? "Matched CRM record: multiple possible records"
+      : "Matched CRM record: not confidently matched";
+
+  try {
+    await sendLarkTextReport({
+      chatId: monitorChatId,
+      text: [
+        "Harry passive sales insight",
+        `From: ${senderId}`,
+        `Chat: ${message?.chat_id || "unknown chat"}`,
+        matchText,
+        `Message: ${truncateForMonitor(question)}`,
+      ].join("\n"),
+    });
+  } catch (error) {
+    console.error("Unable to send Harry passive insight notification", error);
+  }
+}
+
+function isPassiveSalesInsight(question: string) {
+  const normalized = question.toLowerCase();
+
+  if (!normalized.trim()) return false;
+  if (/\b(how many|count|list|show|tell me|give me|what is|what's|which|who|where|when)\b/.test(normalized)) {
+    return false;
+  }
+
+  const hasSalesSubject =
+    /\b(lead|client|customer|prospect|deal|crm|monday|proposal|pricing|budget|decision maker|objection|next step|follow[- ]?up|agreement|signed|signature|closed|lost|meeting|call|sales qualified|no\s*show|cancelled|canceled|rescheduled)\b/.test(
+      normalized,
+    );
+  const hasHighSignalOutcome =
+    /\b(good|great|positive|bad|strong|hot|interested|qualified|not qualified|not a fit|fit|second|2nd|another|booked|scheduled|completed|signed|won|lost|agreed|approved|rejected|concern|concerns|objection|pricing|budget|proposal|follow[- ]?up|nuseir)\b/.test(
+      normalized,
+    );
+  const hasCompanyClue =
+    /(?:https?:\/\/|www\.|\b[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}\b)/i.test(question) ||
+    /\b(company|co\.|inc|llc|ltd|group|clinic|agency|studio|shop|labs?|capital|partners?)\b/.test(
+      normalized,
+    );
+
+  return (hasSalesSubject && hasHighSignalOutcome) || (hasCompanyClue && hasHighSignalOutcome);
 }
 
 async function loadSalesBoardDeals(question = "") {
