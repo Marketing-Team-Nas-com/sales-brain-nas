@@ -324,6 +324,14 @@ async function loadSalesBoardDeals(question = "") {
     throw new Error("Sales Brain is missing MONDAY_SALES_BOARD_IDS, so I cannot read the CRM yet.");
   }
 
+  if (shouldReadLiveMondayData(question)) {
+    const snapshots = await Promise.all(boardIds.map((boardId) => getBoardSnapshot(boardId)));
+    return {
+      boardId: boardIds[0],
+      deals: snapshots.flatMap((snapshot) => snapshot.deals),
+    };
+  }
+
   const memory = await getLatestSalesMemory();
 
   if (memory?.deals.length && memory.deals.some((deal) => deal.group)) {
@@ -336,6 +344,36 @@ async function loadSalesBoardDeals(question = "") {
     boardId: boardIds[0],
     deals: snapshots.flatMap((snapshot) => snapshot.deals),
   };
+}
+
+function shouldReadLiveMondayData(question: string) {
+  const normalized = question.toLowerCase();
+
+  if (/\b(look at|check|pull|read|from|in)\b.{0,40}\b(crm|monday)\b/.test(normalized)) {
+    return true;
+  }
+
+  if (asksForQualitativeSalesMemory(normalized)) {
+    return false;
+  }
+
+  return Boolean(normalized.trim());
+}
+
+function asksForQualitativeSalesMemory(normalized: string) {
+  const asksForAnalysis =
+    /\b(analy[sz]e|analysis|insight|insights|takeaway|takeaways|why|reason|reasons|recommend|recommendation|strategy|ceo report|report)\b/.test(
+      normalized,
+    );
+  const asksForSpecificData =
+    /\b(how many|count|rate|number|total|list|show|which|who|where|when|from|between|since|today|tomorrow|this week|last week)\b/.test(
+      normalized,
+    );
+  const explicitlyAsksForLiveCrm = /\b(look at|check|pull|read|from|in)\b.{0,40}\b(crm|monday)\b/.test(
+    normalized,
+  );
+
+  return asksForAnalysis && !asksForSpecificData && !explicitlyAsksForLiveCrm;
 }
 
 function refreshSalesMemoryInBackground({
