@@ -197,6 +197,8 @@ async function buildSmartDailyNewspaper(facts: ReturnType<typeof buildDailyFacts
                   "Do not report operational volume such as total CRM changes, total notes captured, or noisy field edits.",
                   "Remove test emails, noise, duplicate rows, and low-value system movements.",
                   "Important means: a deal advanced, a deal regressed, a qualified or high-budget call happened, a client replied with meaningful buying signal, a risk/blocker appeared, or a team note creates a follow-up action.",
+                  "Team-chat items are important when they mention a client asking for another/second follow-up call, a demo, proof-of-value, who should join a meeting, whether Nuseir should join, or a team member asking for ownership/next-step guidance.",
+                  "When team chat includes both a client signal and an internal decision question, summarize it as an action item with the company/client name and the decision needed.",
                   "If the day has many raw CRM changes but few meaningful changes, say only the meaningful changes.",
                   "The topLine should be one executive sentence, not a data dump.",
                   "keyNumbers should contain at most 3 metrics and only business metrics, such as sales-qualified calls, high-priority follow-ups, or important booked meetings. Never include 'CRM changes'.",
@@ -370,7 +372,7 @@ function isMeaningfulEmail(line: string) {
 function isMeaningfulTeamNote(line: string) {
   const normalized = line.toLowerCase();
 
-  return /\b(booked|do not email|follow|proposal|qualified|not fit|risk|blocked|budget|meeting|call|client|deal|nuseir|reply|send)\b/.test(
+  return /\b(booked|do not email|follow|follow-up|second|2nd|another call|proposal|qualified|not fit|risk|blocked|budget|meeting|call|client|deal|nuseir|join|involve|demo|proof[- ]of[- ]value|working session|reply|send|who should|shall i|should i)\b/.test(
     normalized,
   );
 }

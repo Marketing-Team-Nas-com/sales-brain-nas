@@ -735,11 +735,11 @@ function isPassiveSalesInsight(question: string) {
   }
 
   const hasSalesSubject =
-    /\b(lead|client|customer|prospect|deal|crm|monday|proposal|pricing|budget|decision maker|objection|next step|follow[- ]?up|agreement|signed|signature|closed|lost|meeting|call|sales qualified|no\s*show|cancelled|canceled|rescheduled)\b/.test(
+    /\b(lead|client|customer|prospect|deal|crm|monday|proposal|pricing|budget|decision maker|objection|next step|follow[- ]?up|agreement|signed|signature|closed|lost|meeting|call|sales qualified|no\s*show|cancelled|canceled|rescheduled|demo|proof[- ]of[- ]value|working session)\b/.test(
       normalized,
     );
   const hasHighSignalOutcome =
-    /\b(good|great|positive|bad|strong|hot|interested|qualified|not qualified|not a fit|fit|second|2nd|another|booked|scheduled|completed|signed|won|lost|agreed|approved|rejected|concern|concerns|objection|pricing|budget|proposal|follow[- ]?up|nuseir)\b/.test(
+    /\b(good|great|positive|bad|strong|hot|interested|qualified|not qualified|not a fit|fit|second|2nd|another|booked|scheduled|completed|signed|won|lost|agreed|approved|rejected|concern|concerns|objection|pricing|budget|proposal|follow[- ]?up|nuseir|join|involve|who should|shall i|should i|demo|proof[- ]of[- ]value|working session)\b/.test(
       normalized,
     );
   const hasCompanyClue =
