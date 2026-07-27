@@ -142,6 +142,8 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  await maybeSendWorkingAcknowledgement({ question, message, messageId });
+
   const boardData = await loadSalesBoardDeals(question);
   const contextNotes = await getSalesContextNotes();
   const answer =
@@ -183,6 +185,75 @@ export async function POST(request: NextRequest) {
   }
 
   return NextResponse.json({ ok: true });
+}
+
+async function maybeSendWorkingAcknowledgement({
+  question,
+  message,
+  messageId,
+}: {
+  question: string;
+  message: NonNullable<LarkEventPayload["event"]>["message"];
+  messageId: string;
+}) {
+  const answer = workingAcknowledgementFor(question, messageId);
+
+  if (!answer) return;
+
+  try {
+    await sendLarkAnswer({ message, messageId, answer });
+  } catch (error) {
+    console.error("Unable to send Harry working acknowledgement", error);
+  }
+}
+
+function workingAcknowledgementFor(question: string, messageId: string) {
+  const normalized = question.toLowerCase().replace(/[^\w\s$+.-]/g, " ").replace(/\s+/g, " ").trim();
+
+  if (!normalized) return "";
+
+  if (/^(yes|yep|yeah|confirm|confirmed|please do|do it|ok do it|go ahead)\b/.test(normalized)) {
+    return "";
+  }
+
+  if (/\b(move|update|change|set|put|make|mark|add|write|post|comment|note)\b/.test(normalized)) {
+    return pickWorkingLine(messageId, [
+      "Got it - checking the exact Monday record before I touch anything.",
+      "On it - matching the CRM record first, because we do not update vibes.",
+      "Copy that - finding the right Monday row before making a move.",
+    ]);
+  }
+
+  if (/\b(report|summary|ceo|pipeline|snapshot|insight|analysis|analyze)\b/.test(normalized)) {
+    return pickWorkingLine(messageId, [
+      "On it - pulling the pipeline together so this does not become spreadsheet soup.",
+      "Give me a sec - I’m turning the CRM chaos into something readable.",
+      "I’m on it - checking the data and making it CEO-clean.",
+    ]);
+  }
+
+  if (
+    /\b(crm|monday|lead|leads|call|calls|meeting|meetings|sales qualified|qualified|budget|inbound|outbound|cmo dinner|no show|cancelled|rescheduled|website|country)\b/.test(
+      normalized,
+    ) ||
+    /\b(how many|count|list|show|which|who|where|when|from|between|since|today|tomorrow|this week|last week|last 7 days)\b/.test(
+      normalized,
+    )
+  ) {
+    return pickWorkingLine(messageId, [
+      "On it, darling - pulling the CRM now.",
+      "Give me one stylish second - checking Monday for you.",
+      "I’m on it - pulling the live CRM so we don’t hallucinate with confidence.",
+      "Checking now - numbers first, drama later.",
+    ]);
+  }
+
+  return "";
+}
+
+function pickWorkingLine(messageId: string, lines: string[]) {
+  const hash = [...messageId].reduce((total, char) => total + char.charCodeAt(0), 0);
+  return lines[hash % lines.length];
 }
 
 async function sendLarkAnswer({
