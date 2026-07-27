@@ -43,6 +43,7 @@ export async function answerSalesQuestion({
   if (
     asksAboutCallsInDateRange(normalized) ||
     asksAboutFitLeadsCreatedInRange(normalized) ||
+    asksAboutBudgetNoBookedLeads(normalized) ||
     asksAboutMillionPlusNeverBooked(normalized) ||
     asksAboutTodaysCalls(normalized) ||
     asksAboutNoShowRate(normalized)
@@ -167,19 +168,32 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
     return `We have ${salesQualified.length} sales qualified leads right now.`;
   }
 
-  if (asksAboutHighBudgetInterestFormNeverBooked(normalized)) {
+  if (asksAboutBudgetNoBookedLeads(normalized)) {
+    const range = dateRange || relativeDateRange(normalized);
+    const wantsInterestForm = asksAboutInterestFormSignal(normalized);
     const matches = deals
-      .filter(isHighBudgetLead)
+      .filter((deal) => budgetMatchesRequestedBands(deal, normalized))
       .filter(hasNeverBookedCall)
-      .filter(hasInterestFormSignal)
-      .sort((a, b) => b.value - a.value || a.account.localeCompare(b.account));
+      .filter((deal) => !range || dealFallsInDateRange(deal, range.startDate, range.endDate))
+      .filter((deal) => !wantsInterestForm || hasInterestFormSignal(deal))
+      .sort(
+        (a, b) =>
+          leadAddedDate(b).localeCompare(leadAddedDate(a)) ||
+          b.value - a.value ||
+          a.account.localeCompare(b.account),
+      );
+
+    const rangeText = range
+      ? ` from ${friendlyDate(range.startDate)} to ${friendlyDate(range.endDate)}`
+      : "";
+    const sourceText = wantsInterestForm ? " interest-form" : "";
 
     if (!matches.length) {
-      return "I do not see any $300K+ interest-form leads that have not booked a meeting.";
+      return `I do not see any ${requestedBudgetLabel(normalized)}${sourceText} leads${rangeText} that have not booked a meeting.`;
     }
 
     return [
-      `I found ${matches.length} $300K+ interest-form leads that have not booked a meeting:`,
+      `I found ${matches.length} ${requestedBudgetLabel(normalized)}${sourceText} leads${rangeText} that have not booked a meeting:`,
       ...matches.slice(0, 30).map(formatLeadListItem),
       matches.length > 30 ? `And ${matches.length - 30} more.` : "",
     ]
@@ -814,6 +828,29 @@ function asksAboutMillionPlusNeverBooked(normalizedQuestion: string) {
   return mentionsMillionPlus && mentionsNeverBooked;
 }
 
+function asksAboutBudgetNoBookedLeads(normalizedQuestion: string) {
+  const mentionsBudget =
+    /\b300\s*k\b/.test(normalizedQuestion) ||
+    /\b300k\s*-\s*1m\b/.test(normalizedQuestion) ||
+    /\b300\s*k\s*(?:to|-)\s*1\s*m\b/.test(normalizedQuestion) ||
+    /\$300\s*k/.test(normalizedQuestion) ||
+    /\b1\s*m\+?\b/.test(normalizedQuestion) ||
+    /\b1m\+?\b/.test(normalizedQuestion) ||
+    /\$1\s*m/.test(normalizedQuestion) ||
+    /\b1\s*million\+?\b/.test(normalizedQuestion);
+  const asksForLeads = /\b(lead|leads|people|companies|records|who|which|list|give|get|show)\b/.test(
+    normalizedQuestion,
+  );
+  const mentionsNoBookedCall =
+    /\b(didn'?t|did not|haven'?t|have not|hasn'?t|has not|never|not|no)\b/.test(
+      normalizedQuestion,
+    ) &&
+    /\b(book|booked|scheduled|had)\b/.test(normalizedQuestion) &&
+    /\b(call|meeting)\b/.test(normalizedQuestion);
+
+  return mentionsBudget && asksForLeads && mentionsNoBookedCall;
+}
+
 function asksAboutHighBudgetInterestFormNeverBooked(normalizedQuestion: string) {
   const mentionsHighBudget =
     /\b300\s*k\b/.test(normalizedQuestion) ||
@@ -830,6 +867,10 @@ function asksAboutHighBudgetInterestFormNeverBooked(normalizedQuestion: string) 
     /\b(call|meeting)\b/.test(normalizedQuestion);
 
   return mentionsHighBudget && asksForPeopleOrList && mentionsInterestForm && mentionsNeverBooked;
+}
+
+function asksAboutInterestFormSignal(normalizedQuestion: string) {
+  return /\b(interest form|form|filled|fill(ed)? up|submitted)\b/.test(normalizedQuestion);
 }
 
 function asksAboutInboundQualifiedLeads(normalizedQuestion: string) {
@@ -991,22 +1032,68 @@ function ownerMatches(deal: SalesDeal, owner: { tokens: string[] }) {
 }
 
 function isMillionPlusLead(deal: SalesDeal) {
-  if (deal.value >= 1_000_000) return true;
-
-  const budget = deal.budget.toLowerCase();
-  return /\b\d+(?:\.\d+)?\s*(?:m|mm|million)\s*\+/.test(budget);
+  return dealBudgetBand(deal) === "million-plus";
 }
 
 function isHighBudgetLead(deal: SalesDeal) {
-  if (deal.value >= 300_000) return true;
+  const band = dealBudgetBand(deal);
+  return band === "300k-to-1m" || band === "million-plus";
+}
 
-  const budget = deal.budget.toLowerCase();
-  return (
-    /\b300\s*k\b/.test(budget) ||
-    /\$300\s*k/.test(budget) ||
-    /\b[3-9]\d{2}\s*k\b/.test(budget) ||
-    /\b\d+(?:\.\d+)?\s*(?:m|mm|million)\s*\+?/.test(budget)
-  );
+function dealBudgetBand(deal: SalesDeal) {
+  const budget = deal.budget.toLowerCase().replace(/\s+/g, "");
+
+  if (/\bunknown\b/.test(budget)) return "unknown";
+  if (/100-?300k/.test(budget) || /100k-?300k/.test(budget)) return "below-300k";
+  if (/1m\+/.test(budget) || /\$1m\+/.test(budget) || /1million\+/.test(budget)) {
+    return "million-plus";
+  }
+  if (/300k-?\$?1m/.test(budget) || /\$300k-?\$?1m/.test(budget)) {
+    return "300k-to-1m";
+  }
+  if (/\b[3-9]\d{2}k\+?/.test(budget)) return "300k-to-1m";
+  if (/\d+(?:\.\d+)?(?:m|mm|million)\+?/.test(budget)) return "million-plus";
+
+  if (deal.value >= 1_000_000) return "million-plus";
+  if (deal.value >= 300_000) return "300k-to-1m";
+
+  return "unknown";
+}
+
+function budgetMatchesRequestedBands(deal: SalesDeal, normalizedQuestion: string) {
+  const wantsMidMarket =
+    /\b300\s*k\b/.test(normalizedQuestion) ||
+    /\b300k\s*-\s*1m\b/.test(normalizedQuestion) ||
+    /\b300\s*k\s*(?:to|-)\s*1\s*m\b/.test(normalizedQuestion);
+  const wantsMillionPlus =
+    /\b1\s*m\+?\b/.test(normalizedQuestion) ||
+    /\b1m\+?\b/.test(normalizedQuestion) ||
+    /\$1\s*m/.test(normalizedQuestion) ||
+    /\b1\s*million\+?\b/.test(normalizedQuestion);
+
+  if (wantsMidMarket && wantsMillionPlus) return isHighBudgetLead(deal);
+  if (wantsMillionPlus) return isMillionPlusLead(deal);
+  if (wantsMidMarket) return isHighBudgetLead(deal) && !isMillionPlusLead(deal);
+
+  return isHighBudgetLead(deal);
+}
+
+function requestedBudgetLabel(normalizedQuestion: string) {
+  const wantsMidMarket =
+    /\b300\s*k\b/.test(normalizedQuestion) ||
+    /\b300k\s*-\s*1m\b/.test(normalizedQuestion) ||
+    /\b300\s*k\s*(?:to|-)\s*1\s*m\b/.test(normalizedQuestion);
+  const wantsMillionPlus =
+    /\b1\s*m\+?\b/.test(normalizedQuestion) ||
+    /\b1m\+?\b/.test(normalizedQuestion) ||
+    /\$1\s*m/.test(normalizedQuestion) ||
+    /\b1\s*million\+?\b/.test(normalizedQuestion);
+
+  if (wantsMidMarket && wantsMillionPlus) return "$300K+";
+  if (wantsMillionPlus) return "$1M+";
+  if (wantsMidMarket) return "$300K-$1M";
+
+  return "$300K+";
 }
 
 function hasInterestFormSignal(deal: SalesDeal) {
@@ -1025,7 +1112,15 @@ function hasInterestFormSignal(deal: SalesDeal) {
 
 function hasNeverBookedCall(deal: SalesDeal) {
   return (
-    !["Booked a Meeting", "Meeting Booked", "No Show", "Cancelled"].includes(deal.callStage) &&
+    ![
+      "Booked a Meeting",
+      "Meeting Booked",
+      "Sales Qualified",
+      "No Show",
+      "Cancelled",
+      "Reschedule",
+      "Rescheduled",
+    ].includes(deal.callStage) &&
     !dateOnly(deal.firstMeetingDate) &&
     !dateOnly(deal.latestMeetingDate)
   );
@@ -1202,6 +1297,11 @@ function leadAddedDate(deal: SalesDeal) {
   return dateOnly(deal.dateAdded) || dateOnly(deal.createdAt);
 }
 
+function dealFallsInDateRange(deal: SalesDeal, startDate: string, endDate: string) {
+  const addedDate = leadAddedDate(deal);
+  return addedDate ? addedDate >= startDate && addedDate <= endDate : false;
+}
+
 function asksAboutFitLeadsCreatedInRange(normalized: string) {
   return (
     /\b(fit|classified as fit|qualification)\b/.test(normalized) &&
@@ -1249,6 +1349,30 @@ function requestedDateRange(normalizedQuestion: string) {
   if (sinceMatch) {
     const startDate = dateFromDayMonth(sinceMatch[1], sinceMatch[2]);
     if (startDate) return { startDate, endDate: todayInSingapore() };
+  }
+
+  const relativeRange = relativeDateRange(normalizedQuestion);
+  if (relativeRange) return relativeRange;
+
+  return null;
+}
+
+function relativeDateRange(normalizedQuestion: string) {
+  const lastNDays = normalizedQuestion.match(/\b(?:last|past)\s+(\d{1,2})\s+days?\b/);
+
+  if (lastNDays) {
+    const days = Math.max(Number(lastNDays[1]), 1);
+    return {
+      startDate: daysAgoInSingapore(days - 1),
+      endDate: todayInSingapore(),
+    };
+  }
+
+  if (/\b(last week|past week|recent|recently)\b/.test(normalizedQuestion)) {
+    return {
+      startDate: daysAgoInSingapore(6),
+      endDate: todayInSingapore(),
+    };
   }
 
   return null;
