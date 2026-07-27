@@ -144,6 +144,28 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true });
   }
 
+  const emailMemoryAnswer = await maybeHandleEmailMemoryQuestion(question);
+
+  if (emailMemoryAnswer) {
+    await sendLarkAnswer({ message, messageId, answer: emailMemoryAnswer });
+    await appendConversationMemory({
+      threadId,
+      userMessage: question,
+      assistantMessage: emailMemoryAnswer,
+    });
+
+    if (isDirectMessage(message)) {
+      await notifyDmMonitor({
+        message,
+        sender: payload.event?.sender,
+        question,
+        answer: emailMemoryAnswer,
+      });
+    }
+
+    return NextResponse.json({ ok: true });
+  }
+
   await maybeSendWorkingAcknowledgement({ question, message, messageId });
 
   void handleSalesAnswerInBackground({
@@ -510,6 +532,69 @@ function maybeHandleGeneralHarryMessage(question: string) {
   }
 
   return "";
+}
+
+async function maybeHandleEmailMemoryQuestion(question: string) {
+  const normalized = question.toLowerCase().replace(/[^\w\s']/g, " ").replace(/\s+/g, " ").trim();
+
+  if (!/\b(email|emails|mail|inbox)\b/.test(normalized)) return "";
+  if (!/\b(latest|recent|last|received|came in|come in|summarize|summary|what was)\b/.test(normalized)) {
+    return "";
+  }
+
+  const notes = (await getSalesContextNotes(120)).filter((note) => note.source === "email");
+
+  if (!notes.length) {
+    return "I do not have any emails in Sales Brain yet. If Zapier says the webhook worked, send me the Step 2 Data out and I’ll trace it.";
+  }
+
+  const requestedText = normalized
+    .replace(/\b(latest|recent|last|received|came in|come in|summarize|summary|what was|email|emails|mail|inbox|you|your|the|a|an)\b/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  const emailNotes = requestedText
+    ? notes
+        .map((note) => ({
+          note,
+          score: scoreEmailNoteForQuestion(note, requestedText),
+        }))
+        .filter((item) => item.score > 0)
+        .sort((a, b) => b.score - a.score)
+        .map((item) => item.note)
+    : notes;
+
+  const latest = emailNotes[emailNotes.length - 1] || notes[notes.length - 1];
+  const lines = latest.note.split("\n").filter(Boolean);
+  const subject = lines.find((line) => line.toLowerCase().startsWith("email received:")) || "";
+  const from = lines.find((line) => line.toLowerCase().startsWith("from:")) || "";
+  const date = lines.find((line) => line.toLowerCase().startsWith("date:")) || "";
+  const matched = lines.find((line) => line.toLowerCase().includes("crm record")) || "";
+  const preview = lines
+    .filter((line) => line !== subject && line !== from && line !== date && line !== matched)
+    .join(" ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 700);
+
+  return [
+    "Latest email I have in Sales Brain:",
+    subject.replace(/^Email received:\s*/i, "Subject: "),
+    from,
+    date,
+    matched,
+    preview ? `Preview: ${preview}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function scoreEmailNoteForQuestion(note: SalesContextNote, requestedText: string) {
+  const searchable = [note.note, note.rawText, note.account, note.email].filter(Boolean).join(" ").toLowerCase();
+  return requestedText
+    .split(/\s+/)
+    .filter((token) => token.length >= 3)
+    .reduce((score, token) => score + (searchable.includes(token) ? 1 : 0), 0);
 }
 
 async function maybeHandlePassiveGroupInsight({
