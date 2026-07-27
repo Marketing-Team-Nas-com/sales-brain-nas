@@ -1603,11 +1603,14 @@ function isCasualSelectionTokenOnly(tokens: string[]) {
 
 function mondayThreadNoteIntent(question: string) {
   const normalized = question.toLowerCase();
+  const asksForNote = /\b(comment|note|update)\b/.test(normalized);
+  const explicitMondayTarget = /\b(thread|monday|crm)\b/.test(normalized);
+  const naturalClientNote =
+    /\b(?:make|add|create|put|write|leave)\b.{0,30}\b(?:comment|note|update)\b/.test(
+      normalized,
+    ) && /\bfor\b/.test(normalized);
 
-  if (
-    !/\b(comment|note|update)\b/.test(normalized) ||
-    !/\b(thread|monday|crm)\b/.test(normalized)
-  ) {
+  if (!asksForNote || (!explicitMondayTarget && !naturalClientNote)) {
     return null;
   }
 
@@ -1702,6 +1705,17 @@ function normalizedCompanyCore(value: string) {
   return normalizeSearch(value)
     .replace(/^www/, "")
     .replace(/(?:com|co|io|ai|org|net)$/g, "");
+}
+
+function isFuzzyCompanyMatch(accountCore: string, token: string) {
+  const tokenCore = normalizedCompanyCore(token);
+
+  return (
+    tokenCore.length >= 6 &&
+    accountCore.length >= 6 &&
+    Math.abs(accountCore.length - tokenCore.length) <= 2 &&
+    editDistance(accountCore, tokenCore) <= 2
+  );
 }
 
 function editDistance(a: string, b: string) {
@@ -1900,6 +1914,9 @@ function findDealMatches({
   const exactAccountMatch = singleStrongAccountMatch(ranked, tokens);
   if (exactAccountMatch) return [exactAccountMatch.deal];
 
+  const fuzzyAccountMatch = singleFuzzyAccountMatch(ranked, tokens);
+  if (fuzzyAccountMatch) return [fuzzyAccountMatch.deal];
+
   const confidentMatch = confidentSingleMatch(ranked);
   if (confidentMatch) return [confidentMatch.deal];
 
@@ -1939,6 +1956,19 @@ function singleStrongAccountMatch(
   return matches.length === 1 ? matches[0] : null;
 }
 
+function singleFuzzyAccountMatch(
+  ranked: Array<{ deal: SalesDeal; score: number }>,
+  tokens: string[],
+) {
+  const matches = ranked.filter(({ deal }) => {
+    const account = normalizedCompanyCore(deal.account);
+
+    return tokens.some((token) => isFuzzyCompanyMatch(account, token));
+  });
+
+  return matches.length === 1 ? matches[0] : null;
+}
+
 function confidentSingleMatch(ranked: Array<{ deal: SalesDeal; score: number }>) {
   const [top, second] = ranked;
 
@@ -1955,6 +1985,7 @@ function confidentSingleMatch(ranked: Array<{ deal: SalesDeal; score: number }>)
 
 function relevanceScore(deal: SalesDeal, tokens: string[]) {
   const account = normalizeSearch(deal.account);
+  const accountCore = normalizedCompanyCore(deal.account);
   const email = normalizeSearch(deal.email);
   const firstName = normalizeSearch(deal.firstName);
   const lastName = normalizeSearch(deal.lastName);
@@ -1981,6 +2012,9 @@ function relevanceScore(deal: SalesDeal, tokens: string[]) {
       matchedExactAccount = true;
     } else if (account && (account.includes(token) || token.includes(account))) {
       score += 40;
+      matchedAccount = true;
+    } else if (isFuzzyCompanyMatch(accountCore, token)) {
+      score += 85;
       matchedAccount = true;
     }
     if (boardName && boardName.includes(token)) score += 8;
