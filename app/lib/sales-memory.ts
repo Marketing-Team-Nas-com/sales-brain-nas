@@ -67,7 +67,7 @@ export type SalesContextNote = {
   id: string;
   createdAt: string;
   threadId: string;
-  source: "lark";
+  source: "lark" | "lark-passive" | "email";
   rawText: string;
   note: string;
   account?: string;
