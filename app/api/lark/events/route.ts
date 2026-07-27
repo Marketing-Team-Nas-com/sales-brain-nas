@@ -911,6 +911,42 @@ async function maybeHandleMondayWrite({
   const updateIntent = mondayUpdateIntent(question, conversation);
 
   if (!updateIntent) {
+    const bulkFollowUpNoteIntent = bulkFollowUpThreadNoteIntent(question, deals);
+
+    if (bulkFollowUpNoteIntent) {
+      const { note, matchedDeals, unresolvedNames } = bulkFollowUpNoteIntent;
+
+      if (unresolvedNames.length) {
+        return `I can do this, but I need cleaner names for: ${unresolvedNames.join(", ")}.`;
+      }
+
+      const action = {
+        id: `${Date.now()}-bulk-follow-up-note`,
+        createdAt: new Date().toISOString(),
+        boardId,
+        itemId: "",
+        account: `${matchedDeals.length} matching records`,
+        email: "",
+        description: `added a monday thread note to ${matchedDeals.length} records`,
+        bulkActions: matchedDeals.map((deal) => ({
+          boardId: deal.boardId || boardId,
+          itemId: deal.id,
+          account: deal.account,
+          email: deal.email,
+          description: "added a monday thread note",
+          updateBody: `Sales Brain note from Lark:\n\n${note}`,
+        })),
+      } satisfies PendingMondayAction;
+
+      if (hasApprovalLanguage(question)) {
+        return executePendingMondayAction({ threadIds: actionThreadIds, action });
+      }
+
+      await setPendingMondayActionForIds(actionThreadIds, action);
+
+      return `Got it - I found ${matchedDeals.map(formatSelectedDeal).join("; ")}. Reply yes to confirm, and I'll add this note to all ${matchedDeals.length} Monday threads: "${note}".`;
+    }
+
     const threadNoteIntent = mondayThreadNoteIntent(question);
 
     if (!threadNoteIntent) {
@@ -1024,6 +1060,31 @@ async function executePendingMondayAction({
   threadIds: string[];
   action: PendingMondayAction;
 }) {
+  if (action.bulkActions?.length) {
+    for (const bulkAction of action.bulkActions) {
+      if (bulkAction.columnValues && Object.keys(bulkAction.columnValues).length) {
+        await changeDealColumns({
+          boardId: bulkAction.boardId,
+          itemId: bulkAction.itemId,
+          columnValues: bulkAction.columnValues,
+        });
+      }
+
+      await createDealUpdate({
+        itemId: bulkAction.itemId,
+        body:
+          bulkAction.updateBody ||
+          `Sales Brain updated ${bulkAction.description} after explicit Lark approval.`,
+      });
+    }
+
+    await clearPendingMondayActionForIds(threadIds);
+
+    return `Done - I updated ${action.bulkActions.length} Monday records: ${action.bulkActions
+      .map((bulkAction) => bulkAction.account)
+      .join(", ")}.`;
+  }
+
   if (action.columnValues && Object.keys(action.columnValues).length) {
     await changeDealColumns({
       boardId: action.boardId,
@@ -1532,6 +1593,77 @@ function mondayThreadNoteIntent(question: string) {
   if (!note) return null;
 
   return { note };
+}
+
+function bulkFollowUpThreadNoteIntent(question: string, deals: SalesDeal[]) {
+  const normalized = question.toLowerCase();
+
+  if (
+    !/\b(note|record|remember|save|add)\b/.test(normalized) ||
+    !/\b(followed\s+up|follow[- ]?up|follow\s+up)\b/.test(normalized)
+  ) {
+    return null;
+  }
+
+  const names = extractBulkFollowUpNames(question);
+  if (names.length < 2) return null;
+
+  const matchedDeals: SalesDeal[] = [];
+  const unresolvedNames: string[] = [];
+  const seenIds = new Set<string>();
+
+  for (const name of names) {
+    const match = findSingleDealForBulkName(name, deals);
+
+    if (!match || seenIds.has(match.id)) {
+      unresolvedNames.push(name);
+      continue;
+    }
+
+    matchedDeals.push(match);
+    seenIds.add(match.id);
+  }
+
+  if (!matchedDeals.length) return null;
+
+  return {
+    note: `Today we followed up.`,
+    matchedDeals,
+    unresolvedNames,
+  };
+}
+
+function extractBulkFollowUpNames(question: string) {
+  const match = question.match(/\b(?:followed\s+up|follow[- ]?up|follow\s+up)\s+(?:with\s+|on\s+)?(.+)$/i);
+  const rawNames = match?.[1]?.trim() || "";
+
+  return rawNames
+    .replace(/[.?!]+$/g, "")
+    .split(/\s*,\s*|\s+\band\b\s+/i)
+    .map((name) => name.trim())
+    .map((name) => name.replace(/^(?:for|with|on)\s+/i, "").trim())
+    .filter((name) => searchTokens(name).length > 0);
+}
+
+function findSingleDealForBulkName(name: string, deals: SalesDeal[]) {
+  const normalizedName = normalizeSearch(name);
+  const exactAccountMatches = deals.filter((deal) => normalizeSearch(deal.account) === normalizedName);
+
+  if (exactAccountMatches.length === 1) return exactAccountMatches[0];
+
+  const strongAccountMatches = deals.filter((deal) => {
+    const account = normalizeSearch(deal.account);
+    return (
+      normalizedName.length >= 4 &&
+      account.length >= 4 &&
+      (account.includes(normalizedName) || normalizedName.includes(account))
+    );
+  });
+
+  if (strongAccountMatches.length === 1) return strongAccountMatches[0];
+
+  const ranked = findDealMatches({ question: name, conversation: [], deals }).slice(0, 2);
+  return ranked.length === 1 ? ranked[0] : null;
 }
 
 async function columnValuesForUpdateIntent(

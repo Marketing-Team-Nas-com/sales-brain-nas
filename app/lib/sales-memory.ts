@@ -61,6 +61,15 @@ export type PendingMondayAction = {
   description: string;
   columnValues?: Record<string, unknown>;
   updateBody?: string;
+  bulkActions?: Array<{
+    boardId: string;
+    itemId: string;
+    account: string;
+    email: string;
+    description: string;
+    columnValues?: Record<string, unknown>;
+    updateBody?: string;
+  }>;
   disambiguation?: {
     candidateItemIds: string[];
     updateKind?:
