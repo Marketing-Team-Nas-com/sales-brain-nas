@@ -176,6 +176,36 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
     return `We have ${outboundSalesQualified.length} outbound sales qualified leads right now.`;
   }
 
+  if (asksForSalesQualifiedLeadList(normalized)) {
+    const ownerFilter = requestedOwner(normalized);
+    const countryFilter = requestedCountry(normalized);
+    const matches = salesQualified
+      .filter((deal) => !ownerFilter || ownerMatches(deal, ownerFilter))
+      .filter((deal) => !countryFilter || countryMatches(deal, countryFilter))
+      .sort(
+        (a, b) =>
+          displayStatus(a.nextStepsStatus).localeCompare(displayStatus(b.nextStepsStatus)) ||
+          a.account.localeCompare(b.account),
+      );
+    const filters = [
+      countryFilter?.label ? `${countryFilter.label}` : "",
+      ownerFilter?.label ? `assigned to ${ownerFilter.label}` : "",
+    ].filter(Boolean);
+    const scope = filters.length ? ` ${filters.join(", ")}` : "";
+
+    if (!matches.length) {
+      return `I do not see any${scope} leads currently at Sales Qualified.`;
+    }
+
+    return [
+      `I found ${matches.length}${scope} leads currently at Sales Qualified:`,
+      ...matches.slice(0, 25).map(formatSalesQualifiedLeadLine),
+      matches.length > 25 ? `And ${matches.length - 25} more.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   if (normalized.includes("sales qualified")) {
     return `We have ${salesQualified.length} sales qualified leads right now.`;
   }
@@ -915,6 +945,14 @@ function asksAboutOutboundQualifiedLeads(normalizedQuestion: string) {
   );
 }
 
+function asksForSalesQualifiedLeadList(normalizedQuestion: string) {
+  return (
+    /\b(list|show|give|get|which|who)\b/.test(normalizedQuestion) &&
+    /\b(qualified|sql|sales qualified)\b/.test(normalizedQuestion) &&
+    /\b(lead|leads|records|clients)\b/.test(normalizedQuestion)
+  );
+}
+
 function asksAboutCmoDinner(normalizedQuestion: string) {
   return (
     /\bcmo\b/.test(normalizedQuestion) ||
@@ -1055,6 +1093,42 @@ function requestedOwner(normalizedQuestion: string) {
 function ownerMatches(deal: SalesDeal, owner: { tokens: string[] }) {
   const normalizedOwner = deal.owner.toLowerCase();
   return owner.tokens.some((token) => normalizedOwner.includes(token));
+}
+
+function requestedCountry(normalizedQuestion: string) {
+  if (/\b(israel|israeli)\b/.test(normalizedQuestion)) {
+    return { label: "Israeli", tokens: ["israel", "israeli"] };
+  }
+
+  if (/\b(us|usa|united states|american)\b/.test(normalizedQuestion)) {
+    return { label: "US", tokens: ["unitedstates", "usa", "us"] };
+  }
+
+  return null;
+}
+
+function countryMatches(deal: SalesDeal, country: { tokens: string[] }) {
+  const normalizedCountry = normalizeSearch(deal.country);
+  return country.tokens.some((token) => normalizedCountry.includes(normalizeSearch(token)));
+}
+
+function formatSalesQualifiedLeadLine(deal: SalesDeal) {
+  const contact = [deal.firstName, deal.lastName].filter(usableField).join(" ");
+  const details = [
+    contact ? contact : "",
+    deal.email ? deal.email : "",
+    deal.country ? deal.country : "",
+    deal.owner && deal.owner !== "Unassigned" ? `owner ${deal.owner}` : "",
+    `Current stage: Sales Qualified`,
+    displayStatus(deal.nextStepsStatus) !== "Not set"
+      ? `Next Steps: ${displayStatus(deal.nextStepsStatus)}`
+      : "",
+    displayStatus(deal.finalVerdict) !== "Not set"
+      ? `Final verdict: ${displayStatus(deal.finalVerdict)}`
+      : "",
+  ].filter(Boolean);
+
+  return `- ${deal.account}: ${details.join("; ")}`;
 }
 
 function isMillionPlusLead(deal: SalesDeal) {
