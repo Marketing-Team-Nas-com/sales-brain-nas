@@ -14,9 +14,10 @@ export async function GET(request: NextRequest) {
     const publish = request.nextUrl.searchParams.get("publish") === "true";
     const previewOnly = request.nextUrl.searchParams.get("preview") === "true" || !publish;
     const sendParam = request.nextUrl.searchParams.get("send");
+    const createDoc = request.nextUrl.searchParams.get("doc") === "true";
     const result = await createDailyNewspaperReport({
       previewOnly,
-      createLarkDoc: publish,
+      createLarkDoc: publish && createDoc,
       sendToChat: publish && sendParam !== "false",
     });
 

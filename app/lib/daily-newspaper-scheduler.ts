@@ -53,15 +53,16 @@ export function ensureDailyNewspaperSchedulerStarted() {
 async function maybeSendDailyNewspaper() {
   const now = singaporeNow();
 
+  if (now.date < startDate()) return;
   if (now.hour < reportHour()) return;
 
   const sent = await getLastSentKey();
   if (sent === now.date) return;
 
   await createDailyNewspaperReport({
-    sendToChat: false,
+    sendToChat: true,
     createLarkDoc: false,
-    previewOnly: true,
+    previewOnly: false,
   });
   await setLastSentKey(now.date);
 }
@@ -84,6 +85,10 @@ function reportHour() {
   return Number.isFinite(parsed) ? Math.max(0, Math.min(23, parsed)) : 21;
 }
 
+function startDate() {
+  return process.env.SALES_BRAIN_DAILY_NEWSPAPER_START_DATE || "2026-07-28";
+}
+
 function singaporeNow() {
   const parts = new Intl.DateTimeFormat("en-US", {
     timeZone: "Asia/Singapore",
@@ -102,7 +107,10 @@ function singaporeNow() {
 }
 
 function scheduleDescription() {
-  return `daily draft at ${String(reportHour()).padStart(2, "0")}:00 Asia/Singapore`;
+  return `daily hosted newspaper link at ${String(reportHour()).padStart(
+    2,
+    "0",
+  )}:00 Asia/Singapore, starting ${startDate()}`;
 }
 
 function stateDir() {

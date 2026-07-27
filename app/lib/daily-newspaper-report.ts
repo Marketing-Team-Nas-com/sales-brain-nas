@@ -1,3 +1,5 @@
+import { mkdir, readdir, readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import {
   appendLarkDocumentTextBlocks,
   appendLarkReportBlocks,
@@ -65,36 +67,30 @@ export async function createDailyNewspaperReport({
   const newspaper = await buildSmartDailyNewspaper(facts);
   const plainText = dailyNewspaperPlainText(newspaper);
   const html = dailyNewspaperHtml(newspaper);
+  const hostedReport = await saveDailyNewspaperHtml(today, html);
 
-  if (previewOnly || !shouldCreateLarkDoc) {
-    return {
-      ok: true,
-      date: today,
-      previewOnly: true,
-      document: null,
-      writeMode: "draft-html",
-      writeError: "",
-      reportPreview: plainText.slice(0, 4000),
-      html,
-    };
-  }
-
-  const document = await createLarkDocument({ title: newspaper.title });
+  let document: Awaited<ReturnType<typeof createLarkDocument>> | null = null;
   let writeMode = "rich-blocks";
   let writeError = "";
 
-  try {
-    await appendLarkReportBlocks({
-      documentId: document.documentId,
-      blocks: dailyNewspaperBlocks(newspaper),
-    });
-  } catch (error) {
-    writeMode = "text-blocks";
-    writeError = error instanceof Error ? error.message : "Rich Lark blocks failed.";
-    await appendLarkDocumentTextBlocks({
-      documentId: document.documentId,
-      paragraphs: dailyNewspaperParagraphs(newspaper),
-    });
+  if (!previewOnly && shouldCreateLarkDoc) {
+    document = await createLarkDocument({ title: newspaper.title });
+
+    try {
+      await appendLarkReportBlocks({
+        documentId: document.documentId,
+        blocks: dailyNewspaperBlocks(newspaper),
+      });
+    } catch (error) {
+      writeMode = "text-blocks";
+      writeError = error instanceof Error ? error.message : "Rich Lark blocks failed.";
+      await appendLarkDocumentTextBlocks({
+        documentId: document.documentId,
+        paragraphs: dailyNewspaperParagraphs(newspaper),
+      });
+    }
+  } else {
+    writeMode = "hosted-html";
   }
 
   const targetChatId =
@@ -110,12 +106,7 @@ export async function createDailyNewspaperReport({
 
     await sendLarkTextReport({
       chatId: targetChatId,
-      text: [
-        `${newspaper.title}`,
-        newspaper.topLine,
-        "",
-        `Read the newspaper: ${document.url}`,
-      ].join("\n"),
+      text: `Evening Sales Brain is ready: ${hostedReport.url}`,
     });
   }
 
@@ -128,7 +119,96 @@ export async function createDailyNewspaperReport({
     writeError,
     reportPreview: plainText.slice(0, 4000),
     html,
+    hostedReport,
   };
+}
+
+export async function readSavedDailyNewspaperHtml(dateKey?: string) {
+  const targetDate = dateKey || (await latestDailyNewspaperDate());
+
+  if (!targetDate) {
+    return null;
+  }
+
+  try {
+    const html = await readFile(dailyNewspaperPath(targetDate), "utf8");
+    return {
+      date: targetDate,
+      html,
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function saveDailyNewspaperHtml(dateKey: string, html: string) {
+  await mkdir(dailyNewspaperDir(), { recursive: true });
+  await writeFile(dailyNewspaperPath(dateKey), html, "utf8");
+  await writeFile(
+    path.join(dailyNewspaperDir(), "latest.json"),
+    JSON.stringify({ date: dateKey, updatedAt: new Date().toISOString() }, null, 2),
+    "utf8",
+  );
+
+  return {
+    date: dateKey,
+    url: dailyNewspaperPublicUrl(dateKey),
+  };
+}
+
+async function latestDailyNewspaperDate() {
+  try {
+    const latest = JSON.parse(await readFile(path.join(dailyNewspaperDir(), "latest.json"), "utf8")) as {
+      date?: string;
+    };
+    if (latest.date) return latest.date;
+  } catch {
+    // Fall back to scanning the directory below.
+  }
+
+  try {
+    const files = await readdir(dailyNewspaperDir());
+    return files
+      .map((file) => file.match(/^(\d{4}-\d{2}-\d{2})\.html$/)?.[1])
+      .filter(Boolean)
+      .sort()
+      .at(-1);
+  } catch {
+    return "";
+  }
+}
+
+function dailyNewspaperPath(dateKey: string) {
+  return path.join(dailyNewspaperDir(), `${dateKey}.html`);
+}
+
+function dailyNewspaperDir() {
+  return path.join(
+    process.env.SALES_BRAIN_MEMORY_DIR || path.join(process.cwd(), ".sales-brain-memory"),
+    "daily-newspaper",
+  );
+}
+
+function dailyNewspaperPublicUrl(dateKey: string) {
+  const baseUrl = publicBaseUrl();
+  const params = new URLSearchParams({ date: dateKey });
+  return `${baseUrl}/api/sales/newspaper?${params.toString()}`;
+}
+
+function publicBaseUrl() {
+  const configured =
+    process.env.SALES_BRAIN_PUBLIC_BASE_URL ||
+    process.env.NEXT_PUBLIC_SITE_URL ||
+    process.env.PUBLIC_BASE_URL;
+
+  if (configured) return configured.replace(/\/$/, "");
+
+  const railwayDomain = process.env.RAILWAY_PUBLIC_DOMAIN;
+  if (railwayDomain) {
+    return railwayDomain.startsWith("http") ? railwayDomain.replace(/\/$/, "") : `https://${railwayDomain}`;
+  }
+
+  return "https://sales-brain-nas-production.up.railway.app";
 }
 
 function buildDailyFacts({
