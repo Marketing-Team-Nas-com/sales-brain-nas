@@ -53,6 +53,7 @@ export async function answerSalesQuestion({
   if (
     asksAboutBudgetNoBookedLeads(normalized) ||
     asksAboutCallsInDateRange(normalized) ||
+    asksAboutCallsOnSpecificDate(normalized) ||
     asksAboutFitLeadsCreatedInRange(normalized) ||
     asksAboutMillionPlusNeverBooked(normalized) ||
     asksAboutTodaysCalls(normalized) ||
@@ -133,6 +134,7 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
   const todaysCalls = bookedMeetingsOn(deals, todayInSingapore());
   const noShowRate = noShowRateForLastSevenDays(deals);
   const dateRange = requestedDateRange(normalized);
+  const singleCallDate = requestedSingleCallDate(normalized);
   const phoneQuery = requestedPhoneNumber(question);
 
   if (phoneQuery) {
@@ -247,6 +249,10 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
       : `I found ${matches.length} calls today:`;
 
     return [heading, ...matches.map(formatDetailedCallItem)].join("\n\n");
+  }
+
+  if (singleCallDate && asksAboutCallsOnSpecificDate(normalized)) {
+    return formatDateRangeCallReport(deals, singleCallDate, singleCallDate, normalized);
   }
 
   if (dateRange && asksAboutCallsInDateRange(normalized)) {
@@ -814,6 +820,16 @@ function asksAboutCallsInDateRange(normalizedQuestion: string) {
   );
 }
 
+function asksAboutCallsOnSpecificDate(normalizedQuestion: string) {
+  return (
+    /\b(call|calls|meeting|meetings)\b/.test(normalizedQuestion) &&
+    /\b(taken|happened|had|scheduled|booked|status|stage|next steps?|outcome|outcomes)\b/.test(
+      normalizedQuestion,
+    ) &&
+    Boolean(requestedSingleCallDate(normalizedQuestion))
+  );
+}
+
 function asksAboutNoShowRate(normalizedQuestion: string) {
   return (
     /\b(no\s*show|no-show|noshow)\b/.test(normalizedQuestion) &&
@@ -1204,6 +1220,10 @@ function formatDateRangeCallReport(
     /\b(outcome|outcomes|what happened|notes?|what'?s next|next steps?|sales qualified|qualified)\b/.test(
       normalizedQuestion,
     );
+  const wantsCallStatusList =
+    /\b(status|stage|call stage|next steps?|taken|happened|had|what calls|which calls|list)\b/.test(
+      normalizedQuestion,
+    );
   const lines = [
     `From ${friendlyDate(startDate)} to ${friendlyDate(endDate)}:`,
     `- ${rangeCalls.length} calls were scheduled.`,
@@ -1214,6 +1234,22 @@ function formatDateRangeCallReport(
     `- ${rescheduledCalls.length} were rescheduled.`,
     `- ${millionPlusHappenedCalls.length} of the calls that happened were $1M+ leads.`,
   ];
+
+  if (wantsCallStatusList) {
+    if (!rangeCalls.length) {
+      return [...lines, "", "I do not see any calls scheduled in that window."].join("\n");
+    }
+
+    return [
+      ...lines,
+      "",
+      "Call status list:",
+      ...rangeCalls.slice(0, 30).map(formatCallStatusItem),
+      rangeCalls.length > 30 ? `And ${rangeCalls.length - 30} more.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
 
   if (!wantsOutcomes && !/\b1\s*m\+|1m\+|\$1\s*m|million\b/.test(normalizedQuestion)) {
     return lines.join("\n");
@@ -1253,6 +1289,37 @@ function formatCallOutcomeItem(deal: SalesDeal) {
     `  Status: ${statusParts.length ? statusParts.join(" / ") : "no outcome entered"}`,
     `  Notes: ${note || "none in CRM"}`,
   ].join("\n");
+}
+
+function formatCallStatusItem(deal: SalesDeal) {
+  const statusParts = [
+    `Call Stage: ${displayStatus(deal.callStage)}`,
+    `Next Steps: ${displayStatus(deal.nextStepsStatus)}`,
+    deal.finalVerdict && deal.finalVerdict !== "5" ? `Final Verdict: ${deal.finalVerdict}` : "",
+    deal.qualification && deal.qualification !== "5"
+      ? `Qualification: ${deal.qualification}`
+      : "",
+  ].filter(Boolean);
+  const details = [
+    friendlyDateTime(deal.firstMeetingDate),
+    deal.owner && deal.owner !== "Unassigned" ? `owner ${deal.owner}` : "",
+    usableField(deal.website) ? deal.website : "",
+  ].filter(Boolean);
+  const note = compactNote(
+    deal.salesCallNotes || deal.agentNotes || deal.nextStep || deal.lookingFor || "",
+  );
+
+  return [
+    `- ${deal.account}${details.length ? ` (${details.join(", ")})` : ""}`,
+    `  ${statusParts.join(" / ")}`,
+    note ? `  Notes: ${note}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function displayStatus(value: string) {
+  return value && value !== "5" ? value : "blank";
 }
 
 function usableField(value: string) {
@@ -1386,6 +1453,22 @@ function requestedDateRange(normalizedQuestion: string) {
   if (relativeRange) return relativeRange;
 
   return null;
+}
+
+function requestedSingleCallDate(normalizedQuestion: string) {
+  if (requestedDateRange(normalizedQuestion)) return "";
+
+  const dayMonth =
+    normalizedQuestion.match(/\b(?:on\s+)?(\d{1,2})(?:st|nd|rd|th)?\s+([a-z]+)\b/) ||
+    normalizedQuestion.match(/\b([a-z]+)\s+(\d{1,2})(?:st|nd|rd|th)?\b/);
+
+  if (!dayMonth) return "";
+
+  if (/^\d+$/.test(dayMonth[1])) {
+    return dateFromDayMonth(dayMonth[1], dayMonth[2]);
+  }
+
+  return dateFromDayMonth(dayMonth[2], dayMonth[1]);
 }
 
 function relativeDateRange(normalizedQuestion: string) {
