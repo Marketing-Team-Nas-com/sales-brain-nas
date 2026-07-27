@@ -69,6 +69,7 @@ export type PendingMondayAction = {
     description: string;
     columnValues?: Record<string, unknown>;
     updateBody?: string;
+    createUpdate?: boolean;
   }>;
   disambiguation?: {
     candidateItemIds: string[];

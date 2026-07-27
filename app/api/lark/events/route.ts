@@ -66,6 +66,7 @@ type LarkEventPayload = {
 const FINAL_VERDICT_COLUMN_ID = "color_mm594jh8";
 const CALL_STAGE_COLUMN_ID = "color_mm4j8pct";
 const NEXT_STEPS_COLUMN_ID = "color_mm524pr";
+const LAST_FOLLOW_UP_COLUMN_ID = "date_mm59agw5";
 const CMO_DINNER_BOARD_ID = "5030120019";
 const CMO_DINNER_FINAL_VERDICT_COLUMN_ID = "color_mm5grmg3";
 const CMO_DINNER_AFTER_DINNER_STATUS_COLUMN_ID = "color_mm5gctyq";
@@ -911,7 +912,7 @@ async function maybeHandleMondayWrite({
   const bulkFollowUpNoteIntent = bulkFollowUpThreadNoteIntent(question, deals);
 
   if (bulkFollowUpNoteIntent) {
-    const { note, matchedDeals, unresolvedNames } = bulkFollowUpNoteIntent;
+    const { followUpDate, matchedDeals, unresolvedNames } = bulkFollowUpNoteIntent;
 
     if (unresolvedNames.length) {
       await clearPendingMondayActionForIds(actionThreadIds);
@@ -925,15 +926,20 @@ async function maybeHandleMondayWrite({
       itemId: "",
       account: `${matchedDeals.length} matching records`,
       email: "",
-      description: `added a monday thread note to ${matchedDeals.length} records`,
-      bulkActions: matchedDeals.map((deal) => ({
-        boardId: deal.boardId || boardId,
-        itemId: deal.id,
-        account: deal.account,
-        email: deal.email,
-        description: "added a monday thread note",
-        updateBody: `Sales Brain note from Lark:\n\n${note}`,
-      })),
+      description: `set Last follow up date to ${followUpDate} on ${matchedDeals.length} records`,
+      bulkActions: await Promise.all(
+        matchedDeals.map(async (deal) => ({
+          boardId: deal.boardId || boardId,
+          itemId: deal.id,
+          account: deal.account,
+          email: deal.email,
+          description: `set Last follow up date to ${followUpDate}`,
+          columnValues: {
+            [await lastFollowUpColumnIdFor(deal)]: { date: followUpDate },
+          },
+          createUpdate: false,
+        })),
+      ),
     } satisfies PendingMondayAction;
 
     if (hasApprovalLanguage(question)) {
@@ -942,7 +948,7 @@ async function maybeHandleMondayWrite({
 
     await setPendingMondayActionForIds(actionThreadIds, action);
 
-    return `Got it - I found ${matchedDeals.map(formatSelectedDeal).join("; ")}. Reply yes to confirm, and I'll add this note to all ${matchedDeals.length} Monday threads: "${note}".`;
+    return `Got it - I found ${matchedDeals.map(formatSelectedDeal).join("; ")}. Reply yes to confirm, and I'll set Last follow up date to ${followUpDate} for all ${matchedDeals.length} records.`;
   }
 
   const updateIntent = mondayUpdateIntent(question, conversation);
@@ -1072,12 +1078,14 @@ async function executePendingMondayAction({
         });
       }
 
-      await createDealUpdate({
-        itemId: bulkAction.itemId,
-        body:
-          bulkAction.updateBody ||
-          `Sales Brain updated ${bulkAction.description} after explicit Lark approval.`,
-      });
+      if (bulkAction.createUpdate !== false) {
+        await createDealUpdate({
+          itemId: bulkAction.itemId,
+          body:
+            bulkAction.updateBody ||
+            `Sales Brain updated ${bulkAction.description} after explicit Lark approval.`,
+        });
+      }
     }
 
     await clearPendingMondayActionForIds(threadIds);
@@ -1629,7 +1637,7 @@ function bulkFollowUpThreadNoteIntent(question: string, deals: SalesDeal[]) {
   if (!matchedDeals.length) return null;
 
   return {
-    note: `Today we followed up.`,
+    followUpDate: todayInSingapore(),
     matchedDeals,
     unresolvedNames,
   };
@@ -1664,8 +1672,47 @@ function findSingleDealForBulkName(name: string, deals: SalesDeal[]) {
 
   if (strongAccountMatches.length === 1) return strongAccountMatches[0];
 
+  const fuzzyAccountMatches = deals.filter((deal) => {
+    const account = normalizedCompanyCore(deal.account);
+    const target = normalizedCompanyCore(name);
+
+    return target.length >= 6 && account.length >= 6 && editDistance(account, target) <= 2;
+  });
+
+  if (fuzzyAccountMatches.length === 1) return fuzzyAccountMatches[0];
+
   const ranked = findDealMatches({ question: name, conversation: [], deals }).slice(0, 2);
   return ranked.length === 1 ? ranked[0] : null;
+}
+
+function normalizedCompanyCore(value: string) {
+  return normalizeSearch(value)
+    .replace(/^www/, "")
+    .replace(/(?:com|co|io|ai|org|net)$/g, "");
+}
+
+function editDistance(a: string, b: string) {
+  const rows = Array.from({ length: a.length + 1 }, (_, index) => [index]);
+
+  for (let column = 1; column <= b.length; column += 1) {
+    rows[0][column] = column;
+  }
+
+  for (let row = 1; row <= a.length; row += 1) {
+    for (let column = 1; column <= b.length; column += 1) {
+      rows[row][column] =
+        a[row - 1] === b[column - 1]
+          ? rows[row - 1][column - 1]
+          : 1 +
+            Math.min(
+              rows[row - 1][column - 1],
+              rows[row - 1][column],
+              rows[row][column - 1],
+            );
+    }
+  }
+
+  return rows[a.length][b.length];
 }
 
 async function columnValuesForUpdateIntent(
@@ -1761,6 +1808,17 @@ async function nextStepsColumnIdFor(deal: SalesDeal) {
 
   const boardId = deal.boardId || CMO_DINNER_BOARD_ID;
   return (await getBoardColumnIdByTitle(boardId, "Next Steps")) || NEXT_STEPS_COLUMN_ID;
+}
+
+async function lastFollowUpColumnIdFor(deal: SalesDeal) {
+  if (!isCmoDinnerDeal(deal)) return LAST_FOLLOW_UP_COLUMN_ID;
+
+  const boardId = deal.boardId || CMO_DINNER_BOARD_ID;
+  return (
+    (await getBoardColumnIdByTitle(boardId, "Last follow up")) ||
+    (await getBoardColumnIdByTitle(boardId, "Last Follow Up")) ||
+    LAST_FOLLOW_UP_COLUMN_ID
+  );
 }
 
 function finalVerdictColumnIdFor(deal: SalesDeal) {
@@ -1988,6 +2046,18 @@ function searchTokens(text: string) {
 
 function normalizeSearch(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+}
+
+function todayInSingapore() {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).formatToParts(new Date());
+
+  const part = (type: string) => parts.find((entry) => entry.type === type)?.value || "";
+  return `${part("year")}-${part("month")}-${part("day")}`;
 }
 
 function formatDealOption(deal: SalesDeal) {
