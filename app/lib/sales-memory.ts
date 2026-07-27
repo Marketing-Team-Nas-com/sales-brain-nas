@@ -61,6 +61,12 @@ export type PendingMondayAction = {
   description: string;
   columnValues?: Record<string, unknown>;
   updateBody?: string;
+  disambiguation?: {
+    candidateItemIds: string[];
+    updateKind?: "lost" | "signed-stage" | "agreement-stage" | "meeting-booked";
+    updateBody?: string;
+    threadNote?: string;
+  };
 };
 
 export type SalesContextNote = {

@@ -758,7 +758,27 @@ async function maybeHandleMondayWrite({
       return "";
     }
 
+    if (action.disambiguation) {
+      return "I still need the exact record before I update Monday - send the email, company name, or Monday link for the one you mean.";
+    }
+
     return executePendingMondayAction({ threadIds: actionThreadIds, action });
+  }
+
+  const resolvedDisambiguation = await maybeResolvePendingDisambiguation({
+    question,
+    actionThreadIds,
+    deals,
+  });
+
+  if (resolvedDisambiguation) {
+    if (hasApprovalLanguage(question)) {
+      return executePendingMondayAction({ threadIds: actionThreadIds, action: resolvedDisambiguation });
+    }
+
+    await setPendingMondayActionForIds(actionThreadIds, resolvedDisambiguation);
+    const email = resolvedDisambiguation.email ? ` (${resolvedDisambiguation.email})` : "";
+    return `Got it - I selected ${resolvedDisambiguation.account}${email}. Reply yes to confirm, and I'll ${confirmationTextForAction(resolvedDisambiguation)}.`;
   }
 
   const updateIntent = mondayUpdateIntent(question, conversation);
@@ -778,7 +798,19 @@ async function maybeHandleMondayWrite({
     }
 
     if (matches.length > 1) {
-      await clearPendingMondayAction(threadId);
+      await setPendingMondayActionForIds(actionThreadIds, {
+        id: `${Date.now()}-disambiguation`,
+        createdAt: new Date().toISOString(),
+        boardId,
+        itemId: "",
+        account: "multiple matching records",
+        email: "",
+        description: "waiting for the exact monday record",
+        disambiguation: {
+          candidateItemIds: matches.map((deal) => deal.id),
+          threadNote: threadNoteIntent.note,
+        },
+      });
       const names = matches.map(formatDealOption).join("; ");
       return `I found multiple matching records: ${names}. Which one should I update?`;
     }
@@ -812,7 +844,20 @@ async function maybeHandleMondayWrite({
   }
 
   if (matches.length > 1) {
-    await clearPendingMondayAction(threadId);
+    await setPendingMondayActionForIds(actionThreadIds, {
+      id: `${Date.now()}-disambiguation`,
+      createdAt: new Date().toISOString(),
+      boardId,
+      itemId: "",
+      account: "multiple matching records",
+      email: "",
+      description: updateIntent.description,
+      disambiguation: {
+        candidateItemIds: matches.map((deal) => deal.id),
+        updateKind: updateIntent.kind,
+        updateBody: updateBodyForIntent(updateIntent, question),
+      },
+    });
     const names = matches.map(formatDealOption).join("; ");
     return `I found multiple matching records: ${names}. Which one should I update?`;
   }
@@ -895,6 +940,95 @@ function isStalePendingMondayAction(action: PendingMondayAction) {
   if (Number.isNaN(createdTime)) return true;
 
   return Date.now() - createdTime > 30 * 60 * 1000;
+}
+
+async function maybeResolvePendingDisambiguation({
+  question,
+  actionThreadIds,
+  deals,
+}: {
+  question: string;
+  actionThreadIds: string[];
+  deals: SalesDeal[];
+}) {
+  const pending = await getFirstPendingMondayAction(actionThreadIds);
+  const disambiguation = pending?.disambiguation;
+
+  if (!pending || !disambiguation) return null;
+
+  const candidateDeals = deals.filter((deal) => disambiguation.candidateItemIds.includes(deal.id));
+  const selectedDeal = selectCandidateDeal(question, candidateDeals);
+
+  if (!selectedDeal) return null;
+
+  const action = {
+    id: `${Date.now()}-${selectedDeal.id}`,
+    createdAt: new Date().toISOString(),
+    boardId: selectedDeal.boardId || pending.boardId,
+    itemId: selectedDeal.id,
+    account: selectedDeal.account,
+    email: selectedDeal.email,
+    description: disambiguation.threadNote
+      ? "added a monday thread note"
+      : descriptionForUpdateKind(disambiguation.updateKind),
+    ...(disambiguation.threadNote
+      ? { updateBody: `Sales Brain note from Lark:\n\n${disambiguation.threadNote}` }
+      : {
+          columnValues: columnValuesForUpdateKind(disambiguation.updateKind, selectedDeal),
+          ...(disambiguation.updateBody ? { updateBody: disambiguation.updateBody } : {}),
+        }),
+  } satisfies PendingMondayAction;
+
+  return action;
+}
+
+function selectCandidateDeal(question: string, candidates: SalesDeal[]) {
+  const questionEmails = [...question.matchAll(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g)].map(
+    (match) => normalizeSearch(match[0]),
+  );
+
+  if (questionEmails.length) {
+    const emailMatches = candidates.filter((deal) =>
+      questionEmails.includes(normalizeSearch(deal.email)),
+    );
+    if (emailMatches.length === 1) return emailMatches[0];
+  }
+
+  const ranked = findDealMatches({ question, conversation: [], deals: candidates });
+  return ranked.length === 1 ? ranked[0] : null;
+}
+
+function descriptionForUpdateKind(kind?: PendingMondayAction["disambiguation"]["updateKind"]) {
+  if (kind === "lost") return "moved Final verdict to Lost";
+  if (kind === "signed-stage") return "moved Final verdict to Signed";
+  if (kind === "agreement-stage") return "moved Final verdict to Agreement Stage";
+  if (kind === "meeting-booked") return "moved Call Stage to Meeting Booked";
+  return "updated monday";
+}
+
+function confirmationTextForAction(action: PendingMondayAction) {
+  if (action.description === "added a monday thread note") return "add that note to the monday thread";
+  if (action.description.startsWith("moved ")) return action.description.replace(/^moved /, "move ");
+  return action.description;
+}
+
+function columnValuesForUpdateKind(
+  kind: PendingMondayAction["disambiguation"]["updateKind"],
+  deal: SalesDeal,
+) {
+  if (kind === "meeting-booked") {
+    return {
+      [callStageColumnIdFor(deal)]: {
+        label: isCmoDinnerDeal(deal) ? "Meeting Booked" : "Booked a Meeting",
+      },
+    };
+  }
+
+  return {
+    [finalVerdictColumnIdFor(deal)]: {
+      label: kind === "lost" ? "Lost" : kind === "signed-stage" ? "Signed" : "Agreement Stage",
+    },
+  };
 }
 
 function recoverPendingMondayAction({
