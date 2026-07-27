@@ -21,6 +21,16 @@ const formatter = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
+function normalizeQuestionForIntent(question: string) {
+  return question
+    .toLowerCase()
+    .replace(/[’‘`]/g, "'")
+    .replace(/[“”]/g, '"')
+    .replace(/[–—]/g, "-")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
 export async function answerSalesQuestion({
   question,
   deals,
@@ -30,7 +40,7 @@ export async function answerSalesQuestion({
   const fallback = deterministicSalesAnswer(question, deals);
   const directAnswer = directSpecificLeadAnswer({ question, deals, conversation });
   const cmoDinnerAnswer = directCmoDinnerAnswer(question, deals);
-  const normalized = question.toLowerCase();
+  const normalized = normalizeQuestionForIntent(question);
 
   if (directAnswer) {
     return directAnswer;
@@ -41,9 +51,9 @@ export async function answerSalesQuestion({
   }
 
   if (
+    asksAboutBudgetNoBookedLeads(normalized) ||
     asksAboutCallsInDateRange(normalized) ||
     asksAboutFitLeadsCreatedInRange(normalized) ||
-    asksAboutBudgetNoBookedLeads(normalized) ||
     asksAboutMillionPlusNeverBooked(normalized) ||
     asksAboutTodaysCalls(normalized) ||
     asksAboutNoShowRate(normalized)
@@ -103,7 +113,7 @@ function directSpecificLeadAnswer({
 }
 
 function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
-  const normalized = question.toLowerCase();
+  const normalized = normalizeQuestionForIntent(question);
   const weighted = deals.reduce(
     (sum, deal) => sum + deal.value * (deal.probability / 100),
     0,
