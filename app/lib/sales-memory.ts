@@ -68,6 +68,7 @@ export type PendingMondayAction = {
       | "signed-stage"
       | "agreement-stage"
       | "meeting-booked"
+      | "sales-qualified"
       | "sales-qualified-proposal";
     updateBody?: string;
     threadNote?: string;

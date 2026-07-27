@@ -1004,6 +1004,7 @@ function descriptionForUpdateKind(kind?: PendingMondayAction["disambiguation"]["
   if (kind === "signed-stage") return "moved Final verdict to Signed";
   if (kind === "agreement-stage") return "moved Final verdict to Agreement Stage";
   if (kind === "meeting-booked") return "moved Call Stage to Meeting Booked";
+  if (kind === "sales-qualified") return "moved Call Stage to Sales Qualified";
   if (kind === "sales-qualified-proposal") {
     return "moved Call Stage to Sales Qualified and Next Steps to Proposal Stage";
   }
@@ -1024,6 +1025,14 @@ function columnValuesForUpdateKind(
     return {
       [callStageColumnIdFor(deal)]: {
         label: isCmoDinnerDeal(deal) ? "Meeting Booked" : "Booked a Meeting",
+      },
+    };
+  }
+
+  if (kind === "sales-qualified") {
+    return {
+      [callStageColumnIdFor(deal)]: {
+        label: "Sales Qualified",
       },
     };
   }
@@ -1268,6 +1277,14 @@ function mondayUpdateIntent(
       description: "moved Call Stage to Sales Qualified and Next Steps to Proposal Stage",
       confirmationText:
         "move Call Stage to Sales Qualified and Next Steps to Proposal Stage in monday",
+    };
+  }
+
+  if (currentMentionsSalesQualified || (contextMentionsSalesQualified && currentMessageLooksLikeSelection)) {
+    return {
+      kind: "sales-qualified",
+      description: "moved Call Stage to Sales Qualified",
+      confirmationText: "move Call Stage to Sales Qualified in monday",
     };
   }
 
