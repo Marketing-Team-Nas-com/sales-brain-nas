@@ -1,10 +1,12 @@
 import { NextResponse } from "next/server";
+import { ensureDailyNewspaperSchedulerStarted } from "../../lib/daily-newspaper-scheduler";
 import { ensureSalesMemorySchedulerStarted } from "../../lib/sales-memory-scheduler";
 import { ensureTwiceWeeklyReportSchedulerStarted } from "../../lib/twice-weekly-report-scheduler";
 
 export async function GET() {
   const memoryScheduler = ensureSalesMemorySchedulerStarted();
   const reportScheduler = ensureTwiceWeeklyReportSchedulerStarted();
+  const dailyNewspaperScheduler = ensureDailyNewspaperSchedulerStarted();
   return NextResponse.json({
     ok: true,
     commit:
@@ -14,5 +16,6 @@ export async function GET() {
       "unknown",
     memoryScheduler,
     reportScheduler,
+    dailyNewspaperScheduler,
   });
 }
