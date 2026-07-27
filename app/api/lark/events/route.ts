@@ -111,8 +111,10 @@ export async function POST(request: NextRequest) {
   }
 
   const question = parseTextContent(message.content);
+  const threadId = conversationThreadId(message);
+  const actionThreadIds = pendingActionThreadIds(message);
 
-  if (!shouldAnswerLarkMessage(message)) {
+  if (!(await shouldAnswerLarkMessage({ message, question, actionThreadIds }))) {
     await maybeHandlePassiveGroupInsight({
       question,
       message,
@@ -122,8 +124,6 @@ export async function POST(request: NextRequest) {
     return NextResponse.json({ ok: true, ignored: "group-message-without-mention" });
   }
 
-  const threadId = conversationThreadId(message);
-  const actionThreadIds = pendingActionThreadIds(message);
   const conversation = await getConversationMemory(threadId);
   const chatIdAnswer = maybeHandleChatIdQuestion(question, message);
 
@@ -406,10 +406,23 @@ function extractTextFromLarkContent(value: unknown): string {
   return extractTextFromLarkContent(record.content);
 }
 
-function shouldAnswerLarkMessage(message: NonNullable<LarkEventPayload["event"]>["message"]) {
+async function shouldAnswerLarkMessage({
+  message,
+  question,
+  actionThreadIds,
+}: {
+  message: NonNullable<LarkEventPayload["event"]>["message"];
+  question: string;
+  actionThreadIds: string[];
+}) {
   if (!isGroupChat(message?.chat_type)) return true;
 
-  return isBotMentioned(message);
+  if (isBotMentioned(message)) return true;
+
+  if (!isConfirmation(question)) return false;
+
+  const pendingAction = await getFirstPendingMondayAction(actionThreadIds);
+  return Boolean(pendingAction);
 }
 
 function isGroupChat(chatType?: string) {
