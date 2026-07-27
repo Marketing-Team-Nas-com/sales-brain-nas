@@ -63,7 +63,12 @@ export type PendingMondayAction = {
   updateBody?: string;
   disambiguation?: {
     candidateItemIds: string[];
-    updateKind?: "lost" | "signed-stage" | "agreement-stage" | "meeting-booked";
+    updateKind?:
+      | "lost"
+      | "signed-stage"
+      | "agreement-stage"
+      | "meeting-booked"
+      | "sales-qualified-proposal";
     updateBody?: string;
     threadNote?: string;
   };

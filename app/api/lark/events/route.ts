@@ -64,6 +64,7 @@ type LarkEventPayload = {
 
 const FINAL_VERDICT_COLUMN_ID = "color_mm594jh8";
 const CALL_STAGE_COLUMN_ID = "color_mm4j8pct";
+const NEXT_STEPS_COLUMN_ID = "color_mm524pr";
 const CMO_DINNER_FINAL_VERDICT_COLUMN_ID = "color_mm5grmg3";
 const CMO_DINNER_AFTER_DINNER_STATUS_COLUMN_ID = "color_mm5gctyq";
 
@@ -1003,6 +1004,9 @@ function descriptionForUpdateKind(kind?: PendingMondayAction["disambiguation"]["
   if (kind === "signed-stage") return "moved Final verdict to Signed";
   if (kind === "agreement-stage") return "moved Final verdict to Agreement Stage";
   if (kind === "meeting-booked") return "moved Call Stage to Meeting Booked";
+  if (kind === "sales-qualified-proposal") {
+    return "moved Call Stage to Sales Qualified and Next Steps to Proposal Stage";
+  }
   return "updated monday";
 }
 
@@ -1020,6 +1024,17 @@ function columnValuesForUpdateKind(
     return {
       [callStageColumnIdFor(deal)]: {
         label: isCmoDinnerDeal(deal) ? "Meeting Booked" : "Booked a Meeting",
+      },
+    };
+  }
+
+  if (kind === "sales-qualified-proposal") {
+    return {
+      [callStageColumnIdFor(deal)]: {
+        label: isCmoDinnerDeal(deal) ? "Sales Qualified" : "Sales Qualified",
+      },
+      [nextStepsColumnIdFor(deal)]: {
+        label: "Proposal Stage",
       },
     };
   }
@@ -1222,6 +1237,14 @@ function mondayUpdateIntent(
     /\b(meeting\s+booked|booked\s+(?:a\s+)?meeting)\b/.test(normalized);
   const contextMentionsMeetingBooked =
     /\b(meeting\s+booked|booked\s+(?:a\s+)?meeting)\b/.test(combined);
+  const currentMentionsSalesQualified =
+    /\b(sales\s+qualified|qualified|sql)\b/.test(normalized);
+  const contextMentionsSalesQualified =
+    /\b(sales\s+qualified|qualified|sql)\b/.test(combined);
+  const currentMentionsProposalNextStep =
+    /\b(proposal\s+stage|send\s+(?:a\s+)?proposal|proposal)\b/.test(normalized);
+  const contextMentionsProposalNextStep =
+    /\b(proposal\s+stage|send\s+(?:a\s+)?proposal|proposal)\b/.test(combined);
   const currentMessageHasUpdateVerb = /\b(move|update|change|set|put|make)\b/.test(normalized);
   const recentMessageHadUpdateVerb = /\b(move|update|change|set|put|make)\b/.test(recentUserText);
   const currentSearchTokens = searchTokens(normalized);
@@ -1235,6 +1258,18 @@ function mondayUpdateIntent(
     (recentMessageHadUpdateVerb && currentMessageLooksLikeSelection && currentMessageLooksShort);
 
   if (!isUpdate) return null;
+
+  if (
+    (currentMentionsSalesQualified && currentMentionsProposalNextStep) ||
+    (contextMentionsSalesQualified && contextMentionsProposalNextStep && currentMessageLooksLikeSelection)
+  ) {
+    return {
+      kind: "sales-qualified-proposal",
+      description: "moved Call Stage to Sales Qualified and Next Steps to Proposal Stage",
+      confirmationText:
+        "move Call Stage to Sales Qualified and Next Steps to Proposal Stage in monday",
+    };
+  }
 
   if (currentMentionsLost || (!currentMentionsAgreement && !currentMentionsMeetingBooked && !currentMentionsSigned && contextMentionsLost)) {
     return {
@@ -1363,6 +1398,10 @@ function extractMondayThreadNote(question: string) {
 
 function callStageColumnIdFor(deal: SalesDeal) {
   return isCmoDinnerDeal(deal) ? CMO_DINNER_AFTER_DINNER_STATUS_COLUMN_ID : CALL_STAGE_COLUMN_ID;
+}
+
+function nextStepsColumnIdFor(deal: SalesDeal) {
+  return isCmoDinnerDeal(deal) ? CMO_DINNER_AFTER_DINNER_STATUS_COLUMN_ID : NEXT_STEPS_COLUMN_ID;
 }
 
 function finalVerdictColumnIdFor(deal: SalesDeal) {
