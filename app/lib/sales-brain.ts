@@ -122,6 +122,28 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
   const todaysCalls = bookedMeetingsOn(deals, todayInSingapore());
   const noShowRate = noShowRateForLastSevenDays(deals);
   const dateRange = requestedDateRange(normalized);
+  const phoneQuery = requestedPhoneNumber(question);
+
+  if (phoneQuery) {
+    const matches = deals
+      .filter((deal) => phoneMatches(deal.phone, phoneQuery))
+      .sort((a, b) => a.account.localeCompare(b.account));
+
+    if (!matches.length) {
+      return `I do not see ${question.match(/[+\d][\d\s().-]{6,}/)?.[0]?.trim() || "that number"} in the CRM phone fields.`;
+    }
+
+    return [
+      `That number matches ${matches.length === 1 ? "this CRM record" : `${matches.length} CRM records`}:`,
+      ...matches.slice(0, 10).map(
+        (deal) =>
+          `- ${deal.account}${deal.firstName || deal.lastName ? ` (${[deal.firstName, deal.lastName].filter(Boolean).join(" ")})` : ""}${deal.email ? `, ${deal.email}` : ""}${deal.phone ? `, ${deal.phone}` : ""}`,
+      ),
+      matches.length > 10 ? `And ${matches.length - 10} more.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
 
   if (normalized.includes("stuck") || normalized.includes("risk")) {
     return [
@@ -603,12 +625,14 @@ function relevanceScore(deal: SalesDeal, tokens: string[]) {
   const account = normalizeSearch(deal.account);
   const email = normalizeSearch(deal.email);
   const website = normalizeSearch(deal.website);
+  const phone = normalizeSearch(deal.phone);
   const firstName = normalizeSearch(deal.firstName);
   const lastName = normalizeSearch(deal.lastName);
-  const searchable = `${account} ${email} ${website} ${firstName} ${lastName}`;
+  const searchable = `${account} ${email} ${website} ${phone} ${firstName} ${lastName}`;
   let score = 0;
 
   for (const token of tokens) {
+    if (phone && (phone.includes(token) || token.includes(phone))) score += 120;
     if (account && account === token) score += 100;
     if (firstName && firstName === token) score += 90;
     if (lastName && lastName === token) score += 80;
@@ -617,6 +641,17 @@ function relevanceScore(deal: SalesDeal, tokens: string[]) {
   }
 
   return score;
+}
+
+function requestedPhoneNumber(question: string) {
+  const match = question.match(/[+\d][\d\s().-]{6,}/);
+  return match ? normalizeSearch(match[0]) : "";
+}
+
+function phoneMatches(phone: string, query: string) {
+  const normalizedPhone = normalizeSearch(phone);
+
+  return Boolean(normalizedPhone && query && (normalizedPhone.includes(query) || query.includes(normalizedPhone)));
 }
 
 function searchTokens(text: string) {
@@ -1307,6 +1342,7 @@ function topDeals(deals: SalesDeal[], limit: number) {
       country: deal.country,
       jobTitle: deal.jobTitle,
       website: deal.website,
+      phone: deal.phone,
       lookingFor: deal.lookingFor,
       agentNotes: deal.agentNotes,
       salesCallNotes: deal.salesCallNotes,

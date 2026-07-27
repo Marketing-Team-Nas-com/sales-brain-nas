@@ -1180,14 +1180,16 @@ function relevanceScore(deal: SalesDeal, tokens: string[]) {
   const firstName = normalizeSearch(deal.firstName);
   const lastName = normalizeSearch(deal.lastName);
   const website = normalizeSearch(deal.website);
+  const phone = normalizeSearch(deal.phone);
   const boardName = normalizeSearch(deal.boardName || "");
-  const searchable = `${account} ${email} ${firstName} ${lastName} ${website} ${boardName}`;
+  const searchable = `${account} ${email} ${firstName} ${lastName} ${website} ${phone} ${boardName}`;
   let score = 0;
   let matchedAccount = false;
   let matchedExactAccount = false;
   let matchedFirstName = false;
 
   for (const token of tokens) {
+    if (phone && (phone.includes(token) || token.includes(phone))) score += 120;
     if (email && email.includes(token)) score += 80;
     if (firstName && firstName === token) {
       score += 70;
