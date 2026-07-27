@@ -32,11 +32,13 @@ type DailyNewspaper = {
 
 export async function createDailyNewspaperReport({
   chatId,
-  sendToChat = true,
+  sendToChat = false,
+  createLarkDoc: shouldCreateLarkDoc = false,
   previewOnly = false,
 }: {
   chatId?: string;
   sendToChat?: boolean;
+  createLarkDoc?: boolean;
   previewOnly?: boolean;
 } = {}) {
   const boardIds = getConfiguredSalesBoardIds();
@@ -62,14 +64,18 @@ export async function createDailyNewspaperReport({
   });
   const newspaper = await buildSmartDailyNewspaper(facts);
   const plainText = dailyNewspaperPlainText(newspaper);
+  const html = dailyNewspaperHtml(newspaper);
 
-  if (previewOnly) {
+  if (previewOnly || !shouldCreateLarkDoc) {
     return {
       ok: true,
       date: today,
-      previewOnly,
+      previewOnly: true,
       document: null,
+      writeMode: "draft-html",
+      writeError: "",
       reportPreview: plainText.slice(0, 4000),
+      html,
     };
   }
 
@@ -121,6 +127,7 @@ export async function createDailyNewspaperReport({
     writeMode,
     writeError,
     reportPreview: plainText.slice(0, 4000),
+    html,
   };
 }
 
@@ -366,6 +373,160 @@ function dailyNewspaperPlainText(newspaper: DailyNewspaper) {
   ].join("\n");
 }
 
+function dailyNewspaperHtml(newspaper: DailyNewspaper) {
+  const section = (title: string, items: string[]) => `
+    <section class="section">
+      <h2>${escapeHtml(title)}</h2>
+      ${
+        items.length
+          ? `<ul>${items.map((item) => `<li>${escapeHtml(item)}</li>`).join("")}</ul>`
+          : `<p class="muted">No key updates.</p>`
+      }
+    </section>`;
+
+  return `<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>${escapeHtml(newspaper.title)}</title>
+    <style>
+      body {
+        margin: 0;
+        background: #f4f0e8;
+        color: #191919;
+        font-family: Georgia, "Times New Roman", serif;
+      }
+      .paper {
+        max-width: 980px;
+        margin: 28px auto;
+        background: #fffdf8;
+        border: 1px solid #d8d0c2;
+        box-shadow: 0 18px 45px rgba(30, 24, 16, 0.14);
+        padding: 38px 44px 44px;
+      }
+      .masthead {
+        border-bottom: 4px double #1f1f1f;
+        text-align: center;
+        padding-bottom: 18px;
+        margin-bottom: 22px;
+      }
+      h1 {
+        font-size: clamp(34px, 5vw, 58px);
+        line-height: 0.95;
+        margin: 0 0 10px;
+        letter-spacing: 0;
+      }
+      .subtitle {
+        font-family: Arial, sans-serif;
+        font-size: 15px;
+        margin: 0;
+        color: #555;
+      }
+      .topline {
+        font-size: 24px;
+        line-height: 1.25;
+        border-bottom: 1px solid #d8d0c2;
+        padding-bottom: 20px;
+        margin: 0 0 22px;
+      }
+      .metrics {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        border-top: 1px solid #1f1f1f;
+        border-bottom: 1px solid #1f1f1f;
+        margin: 18px 0 28px;
+      }
+      .metric {
+        padding: 14px 12px;
+        border-right: 1px solid #d8d0c2;
+        font-family: Arial, sans-serif;
+      }
+      .metric:last-child { border-right: 0; }
+      .metric strong {
+        display: block;
+        font-size: 28px;
+        margin-bottom: 3px;
+      }
+      .metric span {
+        display: block;
+        font-size: 13px;
+        color: #555;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 24px 34px;
+      }
+      .section {
+        border-top: 2px solid #1f1f1f;
+        padding-top: 10px;
+      }
+      h2 {
+        font-family: Arial, sans-serif;
+        font-size: 15px;
+        text-transform: uppercase;
+        letter-spacing: 0;
+        margin: 0 0 10px;
+      }
+      ul {
+        margin: 0;
+        padding-left: 18px;
+      }
+      li {
+        font-size: 16px;
+        line-height: 1.35;
+        margin: 0 0 9px;
+      }
+      .editor {
+        margin-top: 28px;
+        border-top: 4px double #1f1f1f;
+        padding-top: 14px;
+        font-size: 19px;
+        line-height: 1.35;
+      }
+      .muted {
+        color: #666;
+        font-family: Arial, sans-serif;
+      }
+      @media (max-width: 760px) {
+        .paper { margin: 0; padding: 24px 18px; }
+        .metrics, .grid { grid-template-columns: 1fr; }
+        .metric { border-right: 0; border-bottom: 1px solid #d8d0c2; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="paper">
+      <header class="masthead">
+        <h1>${escapeHtml(newspaper.title)}</h1>
+        <p class="subtitle">${escapeHtml(newspaper.subtitle)}</p>
+      </header>
+      <p class="topline">${escapeHtml(newspaper.topLine)}</p>
+      <div class="metrics">
+        ${newspaper.keyNumbers
+          .map(
+            (item) => `<div class="metric"><strong>${escapeHtml(item.value)}</strong>${escapeHtml(
+              item.metric,
+            )}<span>${escapeHtml(item.note)}</span></div>`,
+          )
+          .join("")}
+      </div>
+      <div class="grid">
+        ${section("Key CRM Movement", newspaper.crmMovements)}
+        ${section("Client Emails Worth Reading", newspaper.clientEmails)}
+        ${section("Calls Today", newspaper.calls)}
+        ${section("Team Chat Watchlist", newspaper.teamNotes)}
+      </div>
+      <section class="editor">
+        <h2>Editor's Note</h2>
+        ${escapeHtml(newspaper.executiveNote)}
+      </section>
+    </main>
+  </body>
+</html>`;
+}
+
 function prefixLines(items: string[]) {
   return items.length ? items.map((item) => `- ${item}`) : ["- None."];
 }
@@ -470,4 +631,13 @@ function clean(value: string) {
 function cleanLong(value: string, limit: number) {
   const normalized = value.replace(/\s+/g, " ").trim();
   return normalized.length > limit ? `${normalized.slice(0, Math.max(limit - 3, 0))}...` : normalized;
+}
+
+function escapeHtml(value: string) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 }

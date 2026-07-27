@@ -58,7 +58,11 @@ async function maybeSendDailyNewspaper() {
   const sent = await getLastSentKey();
   if (sent === now.date) return;
 
-  await createDailyNewspaperReport({ sendToChat: true });
+  await createDailyNewspaperReport({
+    sendToChat: false,
+    createLarkDoc: false,
+    previewOnly: true,
+  });
   await setLastSentKey(now.date);
 }
 
@@ -98,7 +102,7 @@ function singaporeNow() {
 }
 
 function scheduleDescription() {
-  return `daily at ${String(reportHour()).padStart(2, "0")}:00 Asia/Singapore`;
+  return `daily draft at ${String(reportHour()).padStart(2, "0")}:00 Asia/Singapore`;
 }
 
 function stateDir() {

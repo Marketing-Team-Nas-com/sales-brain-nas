@@ -10,12 +10,23 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const previewOnly = request.nextUrl.searchParams.get("preview") === "true";
+    const format = request.nextUrl.searchParams.get("format");
+    const publish = request.nextUrl.searchParams.get("publish") === "true";
+    const previewOnly = request.nextUrl.searchParams.get("preview") === "true" || !publish;
     const sendParam = request.nextUrl.searchParams.get("send");
     const result = await createDailyNewspaperReport({
       previewOnly,
-      sendToChat: previewOnly ? sendParam === "true" : sendParam !== "false",
+      createLarkDoc: publish,
+      sendToChat: publish && sendParam !== "false",
     });
+
+    if (format === "html" && typeof result.html === "string") {
+      return new NextResponse(result.html, {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+        },
+      });
+    }
 
     return NextResponse.json(result);
   } catch (error) {
