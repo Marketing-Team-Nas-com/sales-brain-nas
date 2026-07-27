@@ -183,7 +183,7 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
     const wantsInterestForm = asksAboutInterestFormSignal(normalized);
     const matches = deals
       .filter((deal) => budgetMatchesRequestedBands(deal, normalized))
-      .filter(hasNeverBookedCall)
+      .filter((deal) => hasNeverBookedCallForAccount(deal, deals))
       .filter((deal) => !range || dealFallsInDateRange(deal, range.startDate, range.endDate))
       .filter((deal) => !wantsInterestForm || hasInterestFormSignal(deal))
       .sort(
@@ -1133,6 +1133,27 @@ function hasNeverBookedCall(deal: SalesDeal) {
     ].includes(deal.callStage) &&
     !dateOnly(deal.firstMeetingDate) &&
     !dateOnly(deal.latestMeetingDate)
+  );
+}
+
+function hasNeverBookedCallForAccount(deal: SalesDeal, deals: SalesDeal[]) {
+  if (!hasNeverBookedCall(deal)) return false;
+
+  const accountKey = normalizeSearch(deal.account);
+  if (!accountKey) return true;
+
+  return !deals.some(
+    (candidate) =>
+      candidate.id !== deal.id &&
+      normalizeSearch(candidate.account) === accountKey &&
+      hasBookedCall(candidate),
+  );
+}
+
+function hasBookedCall(deal: SalesDeal) {
+  return (
+    ["Booked a Meeting", "Meeting Booked"].includes(deal.callStage) ||
+    Boolean(dateOnly(deal.firstMeetingDate) || dateOnly(deal.latestMeetingDate))
   );
 }
 
