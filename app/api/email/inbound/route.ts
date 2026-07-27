@@ -73,6 +73,15 @@ export async function POST(request: NextRequest) {
 
   return NextResponse.json({
     ok: true,
+    receivedEmail: {
+      from: email.from || "",
+      to: email.to || "",
+      cc: email.cc || "",
+      subject: email.subject || "",
+      date: email.date || "",
+      messageId: email.messageId || "",
+      preview: body.slice(0, 500),
+    },
     matched: deal
       ? {
           account: deal.account,
