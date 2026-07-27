@@ -122,6 +122,19 @@ export async function POST(request: NextRequest) {
   const threadId = conversationThreadId(message);
   const actionThreadIds = pendingActionThreadIds(message);
   const conversation = await getConversationMemory(threadId);
+  const chatIdAnswer = maybeHandleChatIdQuestion(question, message);
+
+  if (chatIdAnswer) {
+    await sendLarkAnswer({ message, messageId, answer: chatIdAnswer });
+    await appendConversationMemory({
+      threadId,
+      userMessage: question,
+      assistantMessage: chatIdAnswer,
+    });
+
+    return NextResponse.json({ ok: true });
+  }
+
   const generalAnswer = maybeHandleGeneralHarryMessage(question);
 
   if (generalAnswer) {
@@ -532,6 +545,32 @@ function maybeHandleGeneralHarryMessage(question: string) {
   }
 
   return "";
+}
+
+function maybeHandleChatIdQuestion(
+  question: string,
+  message: NonNullable<LarkEventPayload["event"]>["message"],
+) {
+  const normalized = question.toLowerCase().replace(/[^\w\s']/g, " ").replace(/\s+/g, " ").trim();
+
+  if (
+    !/\b(chat id|chat_id|group id|conversation id|this chat id|this group id|what is this chat)\b/.test(
+      normalized,
+    )
+  ) {
+    return "";
+  }
+
+  if (!message.chat_id) {
+    return "I can’t see a chat id on this message.";
+  }
+
+  return [
+    "This chat’s Lark ID is:",
+    message.chat_id,
+    "",
+    "Use that as LARK_DAILY_SUMMARY_CHAT_ID in Railway for the nightly Sales Brain newspaper.",
+  ].join("\n");
 }
 
 async function maybeHandleEmailMemoryQuestion(question: string) {
