@@ -120,6 +120,28 @@ export async function POST(request: NextRequest) {
 
   const threadId = conversationThreadId(message);
   const conversation = await getConversationMemory(threadId);
+  const generalAnswer = maybeHandleGeneralHarryMessage(question);
+
+  if (generalAnswer) {
+    await sendLarkAnswer({ message, messageId, answer: generalAnswer });
+    await appendConversationMemory({
+      threadId,
+      userMessage: question,
+      assistantMessage: generalAnswer,
+    });
+
+    if (isDirectMessage(message)) {
+      await notifyDmMonitor({
+        message,
+        sender: payload.event?.sender,
+        question,
+        answer: generalAnswer,
+      });
+    }
+
+    return NextResponse.json({ ok: true });
+  }
+
   const boardData = await loadSalesBoardDeals(question);
   const contextNotes = await getSalesContextNotes();
   const answer =
@@ -143,6 +165,35 @@ export async function POST(request: NextRequest) {
       contextNotes,
     }));
 
+  await sendLarkAnswer({ message, messageId, answer });
+
+  await appendConversationMemory({
+    threadId,
+    userMessage: question,
+    assistantMessage: answer,
+  });
+
+  if (isDirectMessage(message)) {
+    await notifyDmMonitor({
+      message,
+      sender: payload.event?.sender,
+      question,
+      answer,
+    });
+  }
+
+  return NextResponse.json({ ok: true });
+}
+
+async function sendLarkAnswer({
+  message,
+  messageId,
+  answer,
+}: {
+  message: NonNullable<LarkEventPayload["event"]>["message"];
+  messageId: string;
+  answer: string;
+}) {
   if (isGroupChat(message.chat_type)) {
     await replyToLarkMessage({
       messageId,
@@ -161,23 +212,6 @@ export async function POST(request: NextRequest) {
       replyInThread: false,
     });
   }
-
-  await appendConversationMemory({
-    threadId,
-    userMessage: question,
-    assistantMessage: answer,
-  });
-
-  if (isDirectMessage(message)) {
-    await notifyDmMonitor({
-      message,
-      sender: payload.event?.sender,
-      question,
-      answer,
-    });
-  }
-
-  return NextResponse.json({ ok: true });
 }
 
 function parseTextContent(content?: string) {
@@ -322,6 +356,31 @@ async function notifyDmMonitor({
 function truncateForMonitor(text: string) {
   const normalized = text.replace(/\s+/g, " ").trim();
   return normalized.length > 1200 ? `${normalized.slice(0, 1197)}...` : normalized;
+}
+
+function maybeHandleGeneralHarryMessage(question: string) {
+  const normalized = question.toLowerCase().replace(/[^\w\s']/g, " ").replace(/\s+/g, " ").trim();
+
+  if (!normalized) return "";
+
+  if (
+    /^(hi|hello|hey|yo|gm|good morning|good afternoon|good evening)\b/.test(normalized) ||
+    /\b(are you here|you here|u here|are you alive|you alive|can you hear me|test|ping)\b/.test(
+      normalized,
+    )
+  ) {
+    return "Yep, I’m here.";
+  }
+
+  if (/^(thanks|thank you|ty|thx|cool|great|perfect|ok thanks|got it)\b/.test(normalized)) {
+    return "Got it.";
+  }
+
+  if (/\b(what can you do|help|commands|how do i use you)\b/.test(normalized)) {
+    return "I can answer live CRM questions from monday, find lead updates, summarize calls, save sales context, and update monday after you confirm.";
+  }
+
+  return "";
 }
 
 async function maybeHandlePassiveGroupInsight({
@@ -832,6 +891,10 @@ function mondayUpdateIntent(
     return null;
   }
 
+  if (maybeHandleGeneralHarryMessage(question)) {
+    return null;
+  }
+
   const recentUserText = conversation
     .filter((message) => message.role === "user")
     .slice(-3)
@@ -852,8 +915,12 @@ function mondayUpdateIntent(
     /\b(meeting\s+booked|booked\s+(?:a\s+)?meeting)\b/.test(combined);
   const currentMessageHasUpdateVerb = /\b(move|update|change|set|put|make)\b/.test(normalized);
   const recentMessageHadUpdateVerb = /\b(move|update|change|set|put|make)\b/.test(recentUserText);
-  const currentMessageLooksLikeSelection = searchTokens(normalized).length > 0;
-  const currentMessageLooksShort = searchTokens(normalized).length <= 3;
+  const currentSearchTokens = searchTokens(normalized);
+  const currentMessageHasEmail = /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/.test(question);
+  const currentMessageLooksLikeSelection =
+    currentSearchTokens.length > 0 &&
+    (currentMessageHasEmail || !isCasualSelectionTokenOnly(currentSearchTokens));
+  const currentMessageLooksShort = currentSearchTokens.length <= 3;
   const isUpdate =
     currentMessageHasUpdateVerb ||
     (recentMessageHadUpdateVerb && currentMessageLooksLikeSelection && currentMessageLooksShort);
@@ -893,6 +960,26 @@ function mondayUpdateIntent(
   }
 
   return null;
+}
+
+function isCasualSelectionTokenOnly(tokens: string[]) {
+  const casualTokens = new Set([
+    "here",
+    "there",
+    "hello",
+    "hey",
+    "thanks",
+    "thank",
+    "cool",
+    "great",
+    "perfect",
+    "test",
+    "ping",
+    "alive",
+    "hear",
+  ]);
+
+  return tokens.every((token) => casualTokens.has(token));
 }
 
 function mondayThreadNoteIntent(question: string) {
