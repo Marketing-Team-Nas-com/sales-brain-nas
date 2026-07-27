@@ -208,8 +208,17 @@ async function buildSmartDailyNewspaper(facts: ReturnType<typeof buildDailyFacts
       }),
     });
 
-    const payload = (await response.json()) as { output_text?: string };
-    const parsed = parseNewspaperJson(payload.output_text || "");
+    const payload = (await response.json()) as {
+      error?: { message?: string };
+      output_text?: string;
+      output?: Array<{ content?: Array<{ text?: string }> }>;
+    };
+
+    if (!response.ok) {
+      throw new Error(payload.error?.message || `OpenAI returned HTTP ${response.status}`);
+    }
+
+    const parsed = parseNewspaperJson(extractResponseText(payload));
     return normalizeDailyNewspaper(parsed, fallback);
   } catch (error) {
     console.error("Daily newspaper OpenAI edit failed", error);
@@ -270,6 +279,22 @@ function parseNewspaperJson(text: string): Partial<DailyNewspaper> {
   const trimmed = text.trim();
   const jsonText = trimmed.match(/\{[\s\S]*\}/)?.[0] || trimmed;
   return JSON.parse(jsonText) as Partial<DailyNewspaper>;
+}
+
+function extractResponseText(payload: {
+  output_text?: string;
+  output?: Array<{ content?: Array<{ text?: string }> }>;
+}) {
+  if (payload.output_text) return payload.output_text;
+
+  return (
+    payload.output
+      ?.flatMap((item) => item.content || [])
+      .map((content) => content.text)
+      .filter(Boolean)
+      .join("\n")
+      .trim() || ""
+  );
 }
 
 function cleanList(value: unknown, fallback: string[], limit: number) {
