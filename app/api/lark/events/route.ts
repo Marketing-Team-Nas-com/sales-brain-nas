@@ -1379,6 +1379,8 @@ function mondayUpdateIntent(
     /\b(proposal\s+stage|send\s+(?:a\s+)?proposal|proposal)\b/.test(normalized);
   const contextMentionsProposalNextStep =
     /\b(proposal\s+stage|send\s+(?:a\s+)?proposal|proposal)\b/.test(combined);
+  const currentMentionsCmoBoard = asksAboutCmoDinnerBoard(question);
+  const contextMentionsCmoBoard = asksAboutCmoDinnerBoard(combined);
   const currentMentionsProposalDone =
     /\b(proposal\s+done|proposal\s+sent|sent\s+(?:the\s+)?proposal)\b/.test(normalized);
   const contextMentionsProposalDone =
@@ -1396,6 +1398,18 @@ function mondayUpdateIntent(
     (recentMessageHadUpdateVerb && currentMessageLooksLikeSelection && currentMessageLooksShort);
 
   if (!isUpdate) return null;
+
+  if (
+    (currentMentionsCmoBoard || contextMentionsCmoBoard) &&
+    (currentMentionsProposalNextStep ||
+      (contextMentionsProposalNextStep && currentMessageLooksLikeSelection))
+  ) {
+    return {
+      kind: "cmo-proposal-stage",
+      description: "moved CMO Dinner Next Steps to Proposal Stage",
+      confirmationText: "move CMO Dinner Next Steps to Proposal Stage in monday",
+    };
+  }
 
   if (
     currentMentionsProposalDone ||
@@ -1539,7 +1553,11 @@ function columnValuesForUpdateIntent(
     };
   }
 
-  if (updateIntent.kind === "proposal-stage" || updateIntent.kind === "proposal-done") {
+  if (
+    updateIntent.kind === "proposal-stage" ||
+    updateIntent.kind === "cmo-proposal-stage" ||
+    updateIntent.kind === "proposal-done"
+  ) {
     return {
       [nextStepsColumnIdFor(deal)]: {
         label: updateIntent.kind === "proposal-done" ? "Proposal Done" : "Proposal Stage",
