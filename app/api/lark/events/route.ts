@@ -908,44 +908,46 @@ async function maybeHandleMondayWrite({
     return `Got it - I selected ${resolvedDisambiguation.account}${email}. Reply yes to confirm, and I'll ${confirmationTextForAction(resolvedDisambiguation)}.`;
   }
 
+  const bulkFollowUpNoteIntent = bulkFollowUpThreadNoteIntent(question, deals);
+
+  if (bulkFollowUpNoteIntent) {
+    const { note, matchedDeals, unresolvedNames } = bulkFollowUpNoteIntent;
+
+    if (unresolvedNames.length) {
+      await clearPendingMondayActionForIds(actionThreadIds);
+      return `I can do this, but I need cleaner names for: ${unresolvedNames.join(", ")}.`;
+    }
+
+    const action = {
+      id: `${Date.now()}-bulk-follow-up-note`,
+      createdAt: new Date().toISOString(),
+      boardId,
+      itemId: "",
+      account: `${matchedDeals.length} matching records`,
+      email: "",
+      description: `added a monday thread note to ${matchedDeals.length} records`,
+      bulkActions: matchedDeals.map((deal) => ({
+        boardId: deal.boardId || boardId,
+        itemId: deal.id,
+        account: deal.account,
+        email: deal.email,
+        description: "added a monday thread note",
+        updateBody: `Sales Brain note from Lark:\n\n${note}`,
+      })),
+    } satisfies PendingMondayAction;
+
+    if (hasApprovalLanguage(question)) {
+      return executePendingMondayAction({ threadIds: actionThreadIds, action });
+    }
+
+    await setPendingMondayActionForIds(actionThreadIds, action);
+
+    return `Got it - I found ${matchedDeals.map(formatSelectedDeal).join("; ")}. Reply yes to confirm, and I'll add this note to all ${matchedDeals.length} Monday threads: "${note}".`;
+  }
+
   const updateIntent = mondayUpdateIntent(question, conversation);
 
   if (!updateIntent) {
-    const bulkFollowUpNoteIntent = bulkFollowUpThreadNoteIntent(question, deals);
-
-    if (bulkFollowUpNoteIntent) {
-      const { note, matchedDeals, unresolvedNames } = bulkFollowUpNoteIntent;
-
-      if (unresolvedNames.length) {
-        return `I can do this, but I need cleaner names for: ${unresolvedNames.join(", ")}.`;
-      }
-
-      const action = {
-        id: `${Date.now()}-bulk-follow-up-note`,
-        createdAt: new Date().toISOString(),
-        boardId,
-        itemId: "",
-        account: `${matchedDeals.length} matching records`,
-        email: "",
-        description: `added a monday thread note to ${matchedDeals.length} records`,
-        bulkActions: matchedDeals.map((deal) => ({
-          boardId: deal.boardId || boardId,
-          itemId: deal.id,
-          account: deal.account,
-          email: deal.email,
-          description: "added a monday thread note",
-          updateBody: `Sales Brain note from Lark:\n\n${note}`,
-        })),
-      } satisfies PendingMondayAction;
-
-      if (hasApprovalLanguage(question)) {
-        return executePendingMondayAction({ threadIds: actionThreadIds, action });
-      }
-
-      await setPendingMondayActionForIds(actionThreadIds, action);
-
-      return `Got it - I found ${matchedDeals.map(formatSelectedDeal).join("; ")}. Reply yes to confirm, and I'll add this note to all ${matchedDeals.length} Monday threads: "${note}".`;
-    }
 
     const threadNoteIntent = mondayThreadNoteIntent(question);
 
