@@ -144,47 +144,86 @@ export async function POST(request: NextRequest) {
 
   await maybeSendWorkingAcknowledgement({ question, message, messageId });
 
-  const boardData = await loadSalesBoardDeals(question);
-  const contextNotes = await getSalesContextNotes();
-  const answer =
-    (await maybeHandleMondayWrite({
-      question,
-      threadId,
-      boardId: boardData.boardId,
-      deals: boardData.deals,
-      conversation,
-    })) ||
-    (await maybeHandleSalesMemoryCapture({
-      question,
-      threadId,
-      boardId: boardData.boardId,
-      deals: boardData.deals,
-    })) ||
-    (await answerSalesQuestion({
-      question,
-      deals: boardData.deals,
-      conversation,
-      contextNotes,
-    }));
-
-  await sendLarkAnswer({ message, messageId, answer });
-
-  await appendConversationMemory({
+  void handleSalesAnswerInBackground({
+    question,
+    message,
+    messageId,
+    sender: payload.event?.sender,
     threadId,
-    userMessage: question,
-    assistantMessage: answer,
+    conversation,
   });
 
-  if (isDirectMessage(message)) {
-    await notifyDmMonitor({
-      message,
-      sender: payload.event?.sender,
-      question,
-      answer,
-    });
-  }
+  return NextResponse.json({ ok: true, queued: true });
+}
 
-  return NextResponse.json({ ok: true });
+async function handleSalesAnswerInBackground({
+  question,
+  message,
+  messageId,
+  sender,
+  threadId,
+  conversation,
+}: {
+  question: string;
+  message: NonNullable<LarkEventPayload["event"]>["message"];
+  messageId: string;
+  sender?: NonNullable<LarkEventPayload["event"]>["sender"];
+  threadId: string;
+  conversation: ConversationMessage[];
+}) {
+  try {
+    const boardData = await loadSalesBoardDeals(question);
+    const contextNotes = await getSalesContextNotes();
+    const answer =
+      (await maybeHandleMondayWrite({
+        question,
+        threadId,
+        boardId: boardData.boardId,
+        deals: boardData.deals,
+        conversation,
+      })) ||
+      (await maybeHandleSalesMemoryCapture({
+        question,
+        threadId,
+        boardId: boardData.boardId,
+        deals: boardData.deals,
+      })) ||
+      (await answerSalesQuestion({
+        question,
+        deals: boardData.deals,
+        conversation,
+        contextNotes,
+      }));
+
+    await sendLarkAnswer({ message, messageId, answer });
+
+    await appendConversationMemory({
+      threadId,
+      userMessage: question,
+      assistantMessage: answer,
+    });
+
+    if (isDirectMessage(message)) {
+      await notifyDmMonitor({
+        message,
+        sender,
+        question,
+        answer,
+      });
+    }
+  } catch (error) {
+    const messageText =
+      error instanceof Error ? error.message : "I hit an unknown error while pulling the CRM.";
+    const answer = `I hit a snag pulling that from Monday: ${messageText}`;
+
+    console.error("Unable to complete Harry sales answer", error);
+
+    try {
+      await sendLarkAnswer({ message, messageId, answer });
+    } catch (sendError) {
+      console.error("Unable to send Harry sales answer failure", sendError);
+    }
+  }
 }
 
 async function maybeSendWorkingAcknowledgement({
