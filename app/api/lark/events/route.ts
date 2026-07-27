@@ -616,9 +616,10 @@ async function loadSalesBoardDeals(question = "") {
   }
 
   if (shouldReadLiveMondayData(question)) {
-    const snapshots = await Promise.all(boardIds.map((boardId) => getBoardSnapshot(boardId)));
+    const liveBoardIds = liveBoardIdsForQuestion(question, boardIds);
+    const snapshots = await Promise.all(liveBoardIds.map((boardId) => getBoardSnapshot(boardId)));
     return {
-      boardId: boardIds[0],
+      boardId: liveBoardIds[0],
       deals: snapshots.flatMap((snapshot) => snapshot.deals),
     };
   }
@@ -635,6 +636,18 @@ async function loadSalesBoardDeals(question = "") {
     boardId: boardIds[0],
     deals: snapshots.flatMap((snapshot) => snapshot.deals),
   };
+}
+
+function liveBoardIdsForQuestion(question: string, boardIds: string[]) {
+  if (asksAboutCmoDinnerBoard(question)) return boardIds;
+
+  return boardIds.slice(0, 1);
+}
+
+function asksAboutCmoDinnerBoard(question: string) {
+  return /\b(cmo dinner|dinner leads?|miami dinner|singapore dinner|tel aviv|israel dinner)\b/i.test(
+    question,
+  );
 }
 
 function shouldReadLiveMondayData(question: string) {

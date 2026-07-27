@@ -56,30 +56,60 @@ export async function mondayRequest<T>({
     throw new Error("MONDAY_API_TOKEN is not configured.");
   }
 
-  const response = await fetch(MONDAY_API_URL, {
-    method: "POST",
-    headers: {
-      Authorization: token,
-      "Content-Type": "application/json",
-      "API-Version": "2026-04",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
+  let lastError: Error | null = null;
 
-  const payload = (await response.json()) as {
-    data?: T;
-    errors?: Array<{ message: string }>;
-  };
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const response = await fetch(MONDAY_API_URL, {
+        method: "POST",
+        headers: {
+          Authorization: token,
+          "Content-Type": "application/json",
+          "API-Version": "2026-04",
+        },
+        body: JSON.stringify({ query, variables }),
+      });
 
-  if (!response.ok || payload.errors?.length) {
-    throw new Error(payload.errors?.[0]?.message ?? "monday API request failed.");
+      const payload = (await response.json()) as {
+        data?: T;
+        errors?: Array<{ message: string }>;
+      };
+
+      if (!response.ok || payload.errors?.length) {
+        const message = payload.errors?.[0]?.message ?? "monday API request failed.";
+        const retryable = response.status >= 500 || /internal server error|timeout|temporarily/i.test(message);
+
+        if (retryable && attempt < 3) {
+          lastError = new Error(message);
+          await sleep(500 * attempt);
+          continue;
+        }
+
+        throw new Error(message);
+      }
+
+      if (!payload.data) {
+        throw new Error("monday API returned no data.");
+      }
+
+      return payload.data;
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error("monday API request failed.");
+
+      if (attempt < 3 && /internal server error|timeout|fetch failed|temporarily/i.test(lastError.message)) {
+        await sleep(500 * attempt);
+        continue;
+      }
+
+      throw lastError;
+    }
   }
 
-  if (!payload.data) {
-    throw new Error("monday API returned no data.");
-  }
+  throw lastError ?? new Error("monday API request failed.");
+}
 
-  return payload.data;
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
 export async function getBoardSnapshot(boardId: string) {
