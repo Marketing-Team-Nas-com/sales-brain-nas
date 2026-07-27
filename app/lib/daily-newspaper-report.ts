@@ -193,7 +193,13 @@ async function buildSmartDailyNewspaper(facts: ReturnType<typeof buildDailyFacts
                 text: [
                   "You are Harry, the Sales Brain editor for Nas Daily.",
                   "Turn raw CRM, email, call, and team-chat facts into a concise end-of-day sales newspaper for executives.",
-                  "Only include key updates. Remove test emails, noise, duplicate rows, and low-value system movements.",
+                  "Only include key updates a CEO or sales leader would care about.",
+                  "Do not report operational volume such as total CRM changes, total notes captured, or noisy field edits.",
+                  "Remove test emails, noise, duplicate rows, and low-value system movements.",
+                  "Important means: a deal advanced, a deal regressed, a qualified or high-budget call happened, a client replied with meaningful buying signal, a risk/blocker appeared, or a team note creates a follow-up action.",
+                  "If the day has many raw CRM changes but few meaningful changes, say only the meaningful changes.",
+                  "The topLine should be one executive sentence, not a data dump.",
+                  "keyNumbers should contain at most 3 metrics and only business metrics, such as sales-qualified calls, high-priority follow-ups, or important booked meetings. Never include 'CRM changes'.",
                   "Do not invent facts. If something is unclear, omit it or state it conservatively.",
                   "Write in clean, normal English with a sharp editorial voice. No markdown.",
                   "Return only valid JSON matching this shape:",
@@ -234,50 +240,70 @@ async function buildSmartDailyNewspaper(facts: ReturnType<typeof buildDailyFacts
 }
 
 function fallbackDailyNewspaper(facts: ReturnType<typeof buildDailyFacts>): DailyNewspaper {
+  const meaningfulCrm = facts.crmChanges.filter(isMeaningfulCrmMovement).slice(-5);
+  const meaningfulEmails = facts.emails.filter(isMeaningfulEmail).slice(-4);
+  const meaningfulCalls = facts.calls.filter(isMeaningfulCall).slice(0, 5);
+  const meaningfulTeamNotes = facts.teamNotes.filter(isMeaningfulTeamNote).slice(-4);
+  const topLineParts = [
+    facts.counts.salesQualifiedCalls
+      ? `${facts.counts.salesQualifiedCalls} call became sales qualified`
+      : "",
+    meaningfulCrm.length ? `${meaningfulCrm.length} meaningful CRM moves need attention` : "",
+    meaningfulCalls.length ? `${meaningfulCalls.length} priority calls are worth reviewing` : "",
+  ].filter(Boolean);
+
   return {
     title: `The Sales Brain Evening Edition - ${facts.friendlyDate}`,
     subtitle: "A tight end-of-day read on what moved, who replied, and what needs attention.",
-    topLine: `${facts.counts.crmChanges} CRM changes, ${facts.counts.emails} client emails, ${facts.counts.callsLikelyHappened} calls likely happened, ${facts.counts.salesQualifiedCalls} became sales qualified, and ${facts.counts.teamNotes} team notes were captured.`,
+    topLine: topLineParts.length
+      ? `${topLineParts.join("; ")}.`
+      : "No major sales movement needs escalation today.",
     keyNumbers: [
-      { metric: "CRM changes", value: String(facts.counts.crmChanges), note: "Tracked today" },
-      { metric: "Client emails", value: String(facts.counts.emails), note: "Captured today" },
-      {
-        metric: "Calls happened",
-        value: String(facts.counts.callsLikelyHappened),
-        note: "Excludes no-show, cancelled, and rescheduled",
-      },
       {
         metric: "Sales qualified",
         value: String(facts.counts.salesQualifiedCalls),
-        note: "From calls that likely happened today",
+        note: "From today's happened calls",
+      },
+      {
+        metric: "Priority calls",
+        value: String(meaningfulCalls.length),
+        note: "Worth reading, not every call",
+      },
+      {
+        metric: "Follow-up watchlist",
+        value: String(meaningfulTeamNotes.length),
+        note: "Team notes with action signal",
       },
     ],
-    crmMovements: facts.crmChanges.slice(-MAX_SECTION_ITEMS),
-    clientEmails: facts.emails
-      .filter((line) => !/\b(test|hi$|werf)/i.test(line))
-      .slice(-5),
-    calls: facts.calls.slice(0, 6),
-    teamNotes: facts.teamNotes.slice(-5),
-    executiveNote: "The day had enough activity to monitor, but only the cleanest signal should be carried forward.",
+    crmMovements: meaningfulCrm,
+    clientEmails: meaningfulEmails,
+    calls: meaningfulCalls,
+    teamNotes: meaningfulTeamNotes,
+    executiveNote: "Keep the brief focused on deal movement and follow-up risk; raw CRM activity can stay in the CRM.",
   };
 }
 
 function normalizeDailyNewspaper(value: Partial<DailyNewspaper>, fallback: DailyNewspaper): DailyNewspaper {
-  return {
-    title: cleanLong(value.title || fallback.title, 120),
-    subtitle: cleanLong(value.subtitle || fallback.subtitle, 220),
-    topLine: cleanLong(value.topLine || fallback.topLine, 420),
-    keyNumbers: Array.isArray(value.keyNumbers) && value.keyNumbers.length
-      ? value.keyNumbers.slice(0, 6).map((item) => ({
+  const normalizedKeyNumbers = Array.isArray(value.keyNumbers)
+    ? value.keyNumbers
+        .filter((item) => !/\bcrm changes?\b/i.test(String(item.metric || "")))
+        .slice(0, 3)
+        .map((item) => ({
           metric: cleanLong(String(item.metric || ""), 60),
           value: cleanLong(String(item.value || ""), 40),
           note: cleanLong(String(item.note || ""), 120),
         }))
-      : fallback.keyNumbers,
-    crmMovements: cleanList(value.crmMovements, fallback.crmMovements, 6),
-    clientEmails: cleanList(value.clientEmails, fallback.clientEmails, 5),
-    calls: cleanList(value.calls, fallback.calls, 6),
-    teamNotes: cleanList(value.teamNotes, fallback.teamNotes, 5),
+    : [];
+
+  return {
+    title: cleanLong(value.title || fallback.title, 120),
+    subtitle: cleanLong(value.subtitle || fallback.subtitle, 220),
+    topLine: cleanLong(value.topLine || fallback.topLine, 420),
+    keyNumbers: normalizedKeyNumbers.length ? normalizedKeyNumbers : fallback.keyNumbers,
+    crmMovements: cleanList(value.crmMovements, fallback.crmMovements, 6).filter(isMeaningfulCrmMovement),
+    clientEmails: cleanList(value.clientEmails, fallback.clientEmails, 5).filter(isMeaningfulEmail),
+    calls: cleanList(value.calls, fallback.calls, 6).filter(isMeaningfulCall),
+    teamNotes: cleanList(value.teamNotes, fallback.teamNotes, 5).filter(isMeaningfulTeamNote),
     executiveNote: cleanLong(value.executiveNote || fallback.executiveNote, 420),
   };
 }
@@ -307,6 +333,46 @@ function extractResponseText(payload: {
 function cleanList(value: unknown, fallback: string[], limit: number) {
   const source = Array.isArray(value) && value.length ? value : fallback;
   return source.map((item) => cleanLong(String(item || ""), 260)).filter(Boolean).slice(0, limit);
+}
+
+function isMeaningfulCrmMovement(line: string) {
+  const normalized = line.toLowerCase();
+
+  if (/\bmoved from 5 to blank\b|\bremoved moved\b|\bcreated moved from blank to 5\b/.test(normalized)) {
+    return false;
+  }
+
+  return /\b(sales qualified|agreement|signed|lost|not fit|booked|proposal|budget|hot|followed|second call|confirmed|completed|no show|cancelled|reschedule)\b/.test(
+    normalized,
+  );
+}
+
+function isMeaningfulCall(line: string) {
+  const normalized = line.toLowerCase();
+
+  if (/\bno outcome entered\b/.test(normalized)) return false;
+
+  return /\b(sales qualified|agreement|signed|proposal|fit|1m|\$1m|high confidence|medium confidence|deck|budget|decision maker|follow-up|follow up|risk|blocked)\b/.test(
+    normalized,
+  );
+}
+
+function isMeaningfulEmail(line: string) {
+  const normalized = line.toLowerCase();
+
+  if (/\b(test|hi$|werf|no subject)\b/.test(normalized)) return false;
+
+  return /\b(interested|proposal|agreement|contract|signed|budget|meeting|call|question|concern|follow|reply|intro|deck|pricing|yes|ready|approved)\b/.test(
+    normalized,
+  );
+}
+
+function isMeaningfulTeamNote(line: string) {
+  const normalized = line.toLowerCase();
+
+  return /\b(booked|do not email|follow|proposal|qualified|not fit|risk|blocked|budget|meeting|call|client|deal|nuseir|reply|send)\b/.test(
+    normalized,
+  );
 }
 
 function dailyNewspaperBlocks(newspaper: DailyNewspaper): LarkReportBlock[] {
