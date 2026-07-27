@@ -637,6 +637,32 @@ export async function changeDealColumns({
   });
 }
 
+export async function getBoardColumnIdByTitle(boardId: string, title: string) {
+  const data = await mondayRequest<{
+    boards: Array<{
+      columns: Array<{ id: string; title: string }>;
+    }>;
+  }>({
+    query: `
+      query BoardColumns($boardId: ID!) {
+        boards(ids: [$boardId]) {
+          columns {
+            id
+            title
+          }
+        }
+      }
+    `,
+    variables: { boardId },
+  });
+
+  const normalizedTitle = normalizeColumnTitle(title);
+  return (
+    data.boards[0]?.columns.find((column) => normalizeColumnTitle(column.title) === normalizedTitle)
+      ?.id || ""
+  );
+}
+
 export async function createDealUpdate({
   itemId,
   body,

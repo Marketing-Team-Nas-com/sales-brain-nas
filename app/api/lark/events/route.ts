@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import {
   changeDealColumns,
   createDealUpdate,
+  getBoardColumnIdByTitle,
   getBoardSnapshot,
   type SalesDeal,
 } from "../../../lib/monday";
@@ -878,7 +879,7 @@ async function maybeHandleMondayWrite({
   if (isConfirmation(question)) {
     const action =
       (await getFirstPendingMondayAction(actionThreadIds)) ||
-      recoverPendingMondayAction({ conversation, boardId, deals });
+      (await recoverPendingMondayAction({ conversation, boardId, deals }));
 
     if (!action) {
       return "";
@@ -998,7 +999,7 @@ async function maybeHandleMondayWrite({
     account: deal.account,
     email: deal.email,
     description: updateIntent.description,
-    columnValues: columnValuesForUpdateIntent(updateIntent, deal),
+    columnValues: await columnValuesForUpdateIntent(updateIntent, deal),
     ...(updateBody ? { updateBody } : {}),
   } satisfies PendingMondayAction;
 
@@ -1100,7 +1101,7 @@ async function maybeResolvePendingDisambiguation({
     ...(disambiguation.threadNote
       ? { updateBody: `Sales Brain note from Lark:\n\n${disambiguation.threadNote}` }
       : {
-          columnValues: columnValuesForUpdateKind(disambiguation.updateKind, selectedDeal),
+          columnValues: await columnValuesForUpdateKind(disambiguation.updateKind, selectedDeal),
           ...(disambiguation.updateBody ? { updateBody: disambiguation.updateBody } : {}),
         }),
   } satisfies PendingMondayAction;
@@ -1133,6 +1134,9 @@ function descriptionForUpdateKind(kind?: PendingMondayAction["disambiguation"]["
   if (kind === "sales-qualified-proposal") {
     return "moved Call Stage to Sales Qualified and Next Steps to Proposal Stage";
   }
+  if (kind === "proposal-done") return "moved Next Steps to Proposal Done";
+  if (kind === "cmo-proposal-stage") return "moved CMO Dinner Next Steps to Proposal Stage";
+  if (kind === "proposal-stage") return "moved Next Steps to Proposal Stage";
   return "updated monday";
 }
 
@@ -1142,7 +1146,7 @@ function confirmationTextForAction(action: PendingMondayAction) {
   return action.description;
 }
 
-function columnValuesForUpdateKind(
+async function columnValuesForUpdateKind(
   kind: PendingMondayAction["disambiguation"]["updateKind"],
   deal: SalesDeal,
 ) {
@@ -1167,8 +1171,16 @@ function columnValuesForUpdateKind(
       [callStageColumnIdFor(deal)]: {
         label: isCmoDinnerDeal(deal) ? "Sales Qualified" : "Sales Qualified",
       },
-      [nextStepsColumnIdFor(deal)]: {
+      [await nextStepsColumnIdFor(deal)]: {
         label: "Proposal Stage",
+      },
+    };
+  }
+
+  if (kind === "proposal-stage" || kind === "cmo-proposal-stage" || kind === "proposal-done") {
+    return {
+      [await nextStepsColumnIdFor(deal)]: {
+        label: kind === "proposal-done" ? "Proposal Done" : "Proposal Stage",
       },
     };
   }
@@ -1180,7 +1192,7 @@ function columnValuesForUpdateKind(
   };
 }
 
-function recoverPendingMondayAction({
+async function recoverPendingMondayAction({
   conversation,
   boardId,
   deals,
@@ -1218,7 +1230,7 @@ function recoverPendingMondayAction({
     account: deal.account,
     email: deal.email,
     description: updateIntent.description,
-    columnValues: columnValuesForUpdateIntent(updateIntent, deal),
+    columnValues: await columnValuesForUpdateIntent(updateIntent, deal),
     ...(updateBodyForIntent(updateIntent, latestUpdateRequest)
       ? { updateBody: updateBodyForIntent(updateIntent, latestUpdateRequest) }
       : {}),
@@ -1400,6 +1412,17 @@ function mondayUpdateIntent(
   if (!isUpdate) return null;
 
   if (
+    currentMentionsProposalDone ||
+    (contextMentionsProposalDone && currentMessageLooksLikeSelection)
+  ) {
+    return {
+      kind: "proposal-done",
+      description: "moved Next Steps to Proposal Done",
+      confirmationText: "move Next Steps to Proposal Done in monday",
+    };
+  }
+
+  if (
     (currentMentionsCmoBoard || contextMentionsCmoBoard) &&
     (currentMentionsProposalNextStep ||
       (contextMentionsProposalNextStep && currentMessageLooksLikeSelection))
@@ -1408,17 +1431,6 @@ function mondayUpdateIntent(
       kind: "cmo-proposal-stage",
       description: "moved CMO Dinner Next Steps to Proposal Stage",
       confirmationText: "move CMO Dinner Next Steps to Proposal Stage in monday",
-    };
-  }
-
-  if (
-    currentMentionsProposalDone ||
-    (contextMentionsProposalDone && currentMessageLooksLikeSelection)
-  ) {
-    return {
-      kind: "proposal-done",
-      description: "moved Next Steps to Proposal Done",
-      confirmationText: "move Next Steps to Proposal Done in monday",
     };
   }
 
@@ -1522,7 +1534,7 @@ function mondayThreadNoteIntent(question: string) {
   return { note };
 }
 
-function columnValuesForUpdateIntent(
+async function columnValuesForUpdateIntent(
   updateIntent: NonNullable<ReturnType<typeof mondayUpdateIntent>>,
   deal: SalesDeal,
 ) {
@@ -1547,7 +1559,7 @@ function columnValuesForUpdateIntent(
       [callStageColumnIdFor(deal)]: {
         label: "Sales Qualified",
       },
-      [nextStepsColumnIdFor(deal)]: {
+      [await nextStepsColumnIdFor(deal)]: {
         label: "Proposal Stage",
       },
     };
@@ -1559,7 +1571,7 @@ function columnValuesForUpdateIntent(
     updateIntent.kind === "proposal-done"
   ) {
     return {
-      [nextStepsColumnIdFor(deal)]: {
+      [await nextStepsColumnIdFor(deal)]: {
         label: updateIntent.kind === "proposal-done" ? "Proposal Done" : "Proposal Stage",
       },
     };
@@ -1610,8 +1622,11 @@ function callStageColumnIdFor(deal: SalesDeal) {
   return isCmoDinnerDeal(deal) ? CMO_DINNER_AFTER_DINNER_STATUS_COLUMN_ID : CALL_STAGE_COLUMN_ID;
 }
 
-function nextStepsColumnIdFor(deal: SalesDeal) {
-  return isCmoDinnerDeal(deal) ? CMO_DINNER_AFTER_DINNER_STATUS_COLUMN_ID : NEXT_STEPS_COLUMN_ID;
+async function nextStepsColumnIdFor(deal: SalesDeal) {
+  if (!isCmoDinnerDeal(deal)) return NEXT_STEPS_COLUMN_ID;
+
+  const boardId = deal.boardId || CMO_DINNER_BOARD_ID;
+  return (await getBoardColumnIdByTitle(boardId, "Next Steps")) || NEXT_STEPS_COLUMN_ID;
 }
 
 function finalVerdictColumnIdFor(deal: SalesDeal) {

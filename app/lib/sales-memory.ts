@@ -69,7 +69,10 @@ export type PendingMondayAction = {
       | "agreement-stage"
       | "meeting-booked"
       | "sales-qualified"
-      | "sales-qualified-proposal";
+      | "sales-qualified-proposal"
+      | "proposal-stage"
+      | "cmo-proposal-stage"
+      | "proposal-done";
     updateBody?: string;
     threadNote?: string;
   };
