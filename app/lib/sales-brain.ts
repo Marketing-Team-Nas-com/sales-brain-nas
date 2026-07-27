@@ -210,6 +210,44 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
     return `We have ${salesQualified.length} sales qualified leads right now.`;
   }
 
+  if (asksAboutNewBudgetLeads(normalized)) {
+    const range = requestedLeadCreatedDateRange(normalized);
+    const matches = deals
+      .filter((deal) => budgetMatchesRequestedBands(deal, normalized))
+      .filter((deal) => dealFallsInDateRange(deal, range.startDate, range.endDate))
+      .sort(
+        (a, b) =>
+          leadAddedDate(a).localeCompare(leadAddedDate(b)) ||
+          dealBudgetBand(a).localeCompare(dealBudgetBand(b)) ||
+          a.account.localeCompare(b.account),
+      );
+    const millionPlus = matches.filter(isMillionPlusLead);
+    const midBudget = matches.filter((deal) => dealBudgetBand(deal) === "300k-to-1m");
+    const rangeText =
+      range.startDate === range.endDate
+        ? `on ${friendlyDate(range.startDate)}`
+        : `from ${friendlyDate(range.startDate)} to ${friendlyDate(range.endDate)}`;
+
+    if (!matches.length) {
+      return `I do not see any new ${requestedBudgetLabel(normalized)} leads ${rangeText}.`;
+    }
+
+    return [
+      `I found ${matches.length} new ${requestedBudgetLabel(normalized)} leads ${rangeText}:`,
+      `- $300K-$1M: ${midBudget.length}`,
+      `- $1M+: ${millionPlus.length}`,
+      ...matches
+        .slice(0, 20)
+        .map(
+          (deal) =>
+            `- ${deal.account}: ${deal.budget}, ${deal.qualification || "no qualification"}, ${deal.country || "no country"}${deal.email ? `, ${deal.email}` : ""}`,
+        ),
+      matches.length > 20 ? `And ${matches.length - 20} more.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   if (asksAboutBudgetNoBookedLeads(normalized)) {
     const range = dateRange || relativeDateRange(normalized);
     const wantsInterestForm = asksAboutInterestFormSignal(normalized);
@@ -1474,6 +1512,16 @@ function dealFallsInDateRange(deal: SalesDeal, startDate: string, endDate: strin
   return addedDate ? addedDate >= startDate && addedDate <= endDate : false;
 }
 
+function asksAboutNewBudgetLeads(normalized: string) {
+  return (
+    /\b(new leads?|leads?)\b/.test(normalized) &&
+    /\b(came in|come in|added|created|today|yesterday|this week|last week|last \d+ days?|from|since|between)\b/.test(
+      normalized,
+    ) &&
+    /\b(300\s*k|300k|1\s*m|1m|\$1\s*m|\$300)\b/.test(normalized)
+  );
+}
+
 function asksAboutFitLeadsCreatedInRange(normalized: string) {
   return (
     /\b(fit|classified as fit|qualification)\b/.test(normalized) &&
@@ -1527,6 +1575,23 @@ function requestedDateRange(normalizedQuestion: string) {
   if (relativeRange) return relativeRange;
 
   return null;
+}
+
+function requestedLeadCreatedDateRange(normalizedQuestion: string) {
+  const explicit = requestedDateRange(normalizedQuestion);
+  if (explicit) return explicit;
+
+  if (/\btoday\b/.test(normalizedQuestion)) {
+    const today = todayInSingapore();
+    return { startDate: today, endDate: today };
+  }
+
+  if (/\byesterday\b/.test(normalizedQuestion)) {
+    const yesterday = daysAgoInSingapore(1);
+    return { startDate: yesterday, endDate: yesterday };
+  }
+
+  return { startDate: daysAgoInSingapore(6), endDate: todayInSingapore() };
 }
 
 function requestedSingleCallDate(normalizedQuestion: string) {
