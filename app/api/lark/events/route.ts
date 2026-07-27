@@ -119,6 +119,7 @@ export async function POST(request: NextRequest) {
   }
 
   const threadId = conversationThreadId(message);
+  const actionThreadIds = pendingActionThreadIds(message);
   const conversation = await getConversationMemory(threadId);
   const generalAnswer = maybeHandleGeneralHarryMessage(question);
 
@@ -150,6 +151,7 @@ export async function POST(request: NextRequest) {
     messageId,
     sender: payload.event?.sender,
     threadId,
+    actionThreadIds,
     conversation,
   });
 
@@ -162,6 +164,7 @@ async function handleSalesAnswerInBackground({
   messageId,
   sender,
   threadId,
+  actionThreadIds,
   conversation,
 }: {
   question: string;
@@ -169,6 +172,7 @@ async function handleSalesAnswerInBackground({
   messageId: string;
   sender?: NonNullable<LarkEventPayload["event"]>["sender"];
   threadId: string;
+  actionThreadIds: string[];
   conversation: ConversationMessage[];
 }) {
   try {
@@ -178,6 +182,7 @@ async function handleSalesAnswerInBackground({
       (await maybeHandleMondayWrite({
         question,
         threadId,
+        actionThreadIds,
         boardId: boardData.boardId,
         deals: boardData.deals,
         conversation,
@@ -185,6 +190,7 @@ async function handleSalesAnswerInBackground({
       (await maybeHandleSalesMemoryCapture({
         question,
         threadId,
+        actionThreadIds,
         boardId: boardData.boardId,
         deals: boardData.deals,
       })) ||
@@ -422,6 +428,18 @@ function conversationThreadId(message: NonNullable<LarkEventPayload["event"]>["m
     message?.message_id ||
     "lark-default-thread"
   );
+}
+
+function pendingActionThreadIds(message: NonNullable<LarkEventPayload["event"]>["message"]) {
+  const ids = [
+    conversationThreadId(message),
+    message?.root_id,
+    message?.parent_id,
+    message?.message_id,
+    message?.chat_id ? `chat:${message.chat_id}:latest` : "",
+  ];
+
+  return [...new Set(ids.filter(Boolean) as string[])];
 }
 
 async function notifyDmMonitor({
@@ -719,26 +737,28 @@ function isStaleSalesMemory(generatedAt?: string) {
 async function maybeHandleMondayWrite({
   question,
   threadId,
+  actionThreadIds,
   boardId,
   deals,
   conversation,
 }: {
   question: string;
   threadId: string;
+  actionThreadIds: string[];
   boardId: string;
   deals: SalesDeal[];
   conversation: ConversationMessage[];
 }) {
   if (isConfirmation(question)) {
     const action =
-      (await getPendingMondayAction(threadId)) ||
+      (await getFirstPendingMondayAction(actionThreadIds)) ||
       recoverPendingMondayAction({ conversation, boardId, deals });
 
     if (!action) {
       return "";
     }
 
-    return executePendingMondayAction({ threadId, action });
+    return executePendingMondayAction({ threadIds: actionThreadIds, action });
   }
 
   const updateIntent = mondayUpdateIntent(question, conversation);
@@ -776,10 +796,10 @@ async function maybeHandleMondayWrite({
     } satisfies PendingMondayAction;
 
     if (hasApprovalLanguage(question)) {
-      return executePendingMondayAction({ threadId, action });
+      return executePendingMondayAction({ threadIds: actionThreadIds, action });
     }
 
-    await setPendingMondayAction(threadId, action);
+    await setPendingMondayActionForIds(actionThreadIds, action);
 
     return `I found ${formatSelectedDeal(deal)}. Reply yes to confirm, and I'll add this note to the monday thread: "${threadNoteIntent.note}".`;
   }
@@ -812,10 +832,10 @@ async function maybeHandleMondayWrite({
   } satisfies PendingMondayAction;
 
   if (hasApprovalLanguage(question)) {
-    return executePendingMondayAction({ threadId, action });
+    return executePendingMondayAction({ threadIds: actionThreadIds, action });
   }
 
-  await setPendingMondayAction(threadId, action);
+  await setPendingMondayActionForIds(actionThreadIds, action);
 
   const currentStage = [deal.callStage, deal.nextStepsStatus, deal.finalVerdict]
     .filter((value) => value && value !== "5")
@@ -826,10 +846,10 @@ async function maybeHandleMondayWrite({
 }
 
 async function executePendingMondayAction({
-  threadId,
+  threadIds,
   action,
 }: {
-  threadId: string;
+  threadIds: string[];
   action: PendingMondayAction;
 }) {
   if (action.columnValues && Object.keys(action.columnValues).length) {
@@ -847,10 +867,34 @@ async function executePendingMondayAction({
       `Sales Brain updated ${action.description} after explicit Lark approval.`,
   });
 
-  await clearPendingMondayAction(threadId);
+  await clearPendingMondayActionForIds(threadIds);
 
   const email = action.email ? ` (${action.email})` : "";
   return `Done - I updated ${action.account}${email} in monday: ${action.description}.`;
+}
+
+async function getFirstPendingMondayAction(threadIds: string[]) {
+  for (const threadId of threadIds) {
+    const action = await getPendingMondayAction(threadId);
+    if (action && !isStalePendingMondayAction(action)) return action;
+  }
+
+  return null;
+}
+
+async function setPendingMondayActionForIds(threadIds: string[], action: PendingMondayAction) {
+  await Promise.all(threadIds.map((threadId) => setPendingMondayAction(threadId, action)));
+}
+
+async function clearPendingMondayActionForIds(threadIds: string[]) {
+  await Promise.all(threadIds.map((threadId) => clearPendingMondayAction(threadId)));
+}
+
+function isStalePendingMondayAction(action: PendingMondayAction) {
+  const createdTime = Date.parse(action.createdAt);
+  if (Number.isNaN(createdTime)) return true;
+
+  return Date.now() - createdTime > 30 * 60 * 1000;
 }
 
 function recoverPendingMondayAction({
@@ -901,11 +945,13 @@ function recoverPendingMondayAction({
 async function maybeHandleSalesMemoryCapture({
   question,
   threadId,
+  actionThreadIds,
   boardId,
   deals,
 }: {
   question: string;
   threadId: string;
+  actionThreadIds: string[];
   boardId: string;
   deals: SalesDeal[];
 }) {
@@ -942,7 +988,7 @@ async function maybeHandleSalesMemoryCapture({
     email: deal.email,
   });
 
-  await setPendingMondayAction(threadId, {
+  await setPendingMondayActionForIds(actionThreadIds, {
     id: saved.id,
     createdAt: saved.createdAt,
     boardId: deal.boardId || boardId,
@@ -961,8 +1007,13 @@ function isConfirmation(question: string) {
   const normalized = question.trim().toLowerCase();
   const words = normalized.split(/\s+/).filter(Boolean);
 
-  if (!normalized || words.length > 6) return false;
+  if (!normalized || words.length > 12) return false;
   if (/\b(no|nope|not|don't|dont|stop|cancel|wait)\b/.test(normalized)) return false;
+  if (/\b(can you|could you)\s+(?:please\s+)?action\b/.test(normalized)) return true;
+  if (/\b(?:please\s+)?(?:action|execute|run|make the change|do the update)\b/.test(normalized)) {
+    return true;
+  }
+
   if (/\b(can you|how many|what|which|who|list|show|tell|give)\b/.test(normalized)) {
     return false;
   }
@@ -971,7 +1022,7 @@ function isConfirmation(question: string) {
 }
 
 function hasApprovalLanguage(question: string) {
-  return /\b(yes|yep|yeah|confirm|approved|approve|do it|go ahead|ok|okay|please do it|pls do it)\b/i.test(
+  return /\b(yes|yep|yeah|confirm|confirmed|approved|approve|do it|go ahead|ok|okay|please do it|pls do it|action this|action it|execute this|run it)\b/i.test(
     question,
   );
 }
