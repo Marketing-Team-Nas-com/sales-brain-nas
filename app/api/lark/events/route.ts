@@ -65,6 +65,7 @@ type LarkEventPayload = {
 const FINAL_VERDICT_COLUMN_ID = "color_mm594jh8";
 const CALL_STAGE_COLUMN_ID = "color_mm4j8pct";
 const NEXT_STEPS_COLUMN_ID = "color_mm524pr";
+const CMO_DINNER_BOARD_ID = "5030120019";
 const CMO_DINNER_FINAL_VERDICT_COLUMN_ID = "color_mm5grmg3";
 const CMO_DINNER_AFTER_DINNER_STATUS_COLUMN_ID = "color_mm5gctyq";
 
@@ -782,13 +783,13 @@ async function loadSalesBoardDeals(question = "") {
 }
 
 function liveBoardIdsForQuestion(question: string, boardIds: string[]) {
-  if (asksAboutCmoDinnerBoard(question)) return boardIds;
+  if (asksAboutCmoDinnerBoard(question)) return [CMO_DINNER_BOARD_ID];
 
   return boardIds.slice(0, 1);
 }
 
 function asksAboutCmoDinnerBoard(question: string) {
-  return /\b(cmo dinner|dinner leads?|miami dinner|singapore dinner|tel aviv|israel dinner)\b/i.test(
+  return /\b(cmo board|cmo dinner|dinner leads?|miami dinner|singapore dinner|tel aviv|israel dinner)\b/i.test(
     question,
   );
 }
@@ -1378,6 +1379,10 @@ function mondayUpdateIntent(
     /\b(proposal\s+stage|send\s+(?:a\s+)?proposal|proposal)\b/.test(normalized);
   const contextMentionsProposalNextStep =
     /\b(proposal\s+stage|send\s+(?:a\s+)?proposal|proposal)\b/.test(combined);
+  const currentMentionsProposalDone =
+    /\b(proposal\s+done|proposal\s+sent|sent\s+(?:the\s+)?proposal)\b/.test(normalized);
+  const contextMentionsProposalDone =
+    /\b(proposal\s+done|proposal\s+sent|sent\s+(?:the\s+)?proposal)\b/.test(combined);
   const currentMessageHasUpdateVerb = /\b(move|update|change|set|put|make)\b/.test(normalized);
   const recentMessageHadUpdateVerb = /\b(move|update|change|set|put|make)\b/.test(recentUserText);
   const currentSearchTokens = searchTokens(normalized);
@@ -1391,6 +1396,17 @@ function mondayUpdateIntent(
     (recentMessageHadUpdateVerb && currentMessageLooksLikeSelection && currentMessageLooksShort);
 
   if (!isUpdate) return null;
+
+  if (
+    currentMentionsProposalDone ||
+    (contextMentionsProposalDone && currentMessageLooksLikeSelection)
+  ) {
+    return {
+      kind: "proposal-done",
+      description: "moved Next Steps to Proposal Done",
+      confirmationText: "move Next Steps to Proposal Done in monday",
+    };
+  }
 
   if (
     (currentMentionsSalesQualified && currentMentionsProposalNextStep) ||
@@ -1409,6 +1425,14 @@ function mondayUpdateIntent(
       kind: "sales-qualified",
       description: "moved Call Stage to Sales Qualified",
       confirmationText: "move Call Stage to Sales Qualified in monday",
+    };
+  }
+
+  if (currentMentionsProposalNextStep || (contextMentionsProposalNextStep && currentMessageLooksLikeSelection)) {
+    return {
+      kind: "proposal-stage",
+      description: "moved Next Steps to Proposal Stage",
+      confirmationText: "move Next Steps to Proposal Stage in monday",
     };
   }
 
@@ -1496,6 +1520,33 @@ function columnValuesForUpdateIntent(
     };
   }
 
+  if (updateIntent.kind === "sales-qualified") {
+    return {
+      [callStageColumnIdFor(deal)]: {
+        label: "Sales Qualified",
+      },
+    };
+  }
+
+  if (updateIntent.kind === "sales-qualified-proposal") {
+    return {
+      [callStageColumnIdFor(deal)]: {
+        label: "Sales Qualified",
+      },
+      [nextStepsColumnIdFor(deal)]: {
+        label: "Proposal Stage",
+      },
+    };
+  }
+
+  if (updateIntent.kind === "proposal-stage" || updateIntent.kind === "proposal-done") {
+    return {
+      [nextStepsColumnIdFor(deal)]: {
+        label: updateIntent.kind === "proposal-done" ? "Proposal Done" : "Proposal Stage",
+      },
+    };
+  }
+
   return {
     [finalVerdictColumnIdFor(deal)]: {
       label:
@@ -1550,7 +1601,7 @@ function finalVerdictColumnIdFor(deal: SalesDeal) {
 }
 
 function isCmoDinnerDeal(deal: SalesDeal) {
-  return deal.boardId === "5030120019" || (deal.boardName || "").toLowerCase().includes("cmo dinner");
+  return deal.boardId === CMO_DINNER_BOARD_ID || (deal.boardName || "").toLowerCase().includes("cmo dinner");
 }
 
 function isReadOnlySalesQuestion(normalized: string) {
@@ -1588,8 +1639,9 @@ function findDealMatches({
     : deals;
 
   if (!tokens.length) return [];
+  if (boardHint && !candidateDeals.length) return [];
 
-  const ranked = (candidateDeals.length ? candidateDeals : deals)
+  const ranked = candidateDeals
     .map((deal) => {
       const directScore = relevanceScore(deal, tokens);
       const contextBonus = directScore > 0 ? relevanceScore(deal, contextTokens) * 0.25 : 0;
@@ -1712,7 +1764,7 @@ function boardContextHint(text: string) {
 
 function dealMatchesBoardHint(deal: SalesDeal, hint: string) {
   if (hint === "cmo-dinner") {
-    return deal.boardId === "5030120019" || (deal.boardName || "").toLowerCase().includes("cmo dinner");
+    return deal.boardId === CMO_DINNER_BOARD_ID || (deal.boardName || "").toLowerCase().includes("cmo dinner");
   }
 
   return false;
