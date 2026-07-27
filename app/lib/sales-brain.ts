@@ -167,6 +167,26 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
     return `We have ${salesQualified.length} sales qualified leads right now.`;
   }
 
+  if (asksAboutHighBudgetInterestFormNeverBooked(normalized)) {
+    const matches = deals
+      .filter(isHighBudgetLead)
+      .filter(hasNeverBookedCall)
+      .filter(hasInterestFormSignal)
+      .sort((a, b) => b.value - a.value || a.account.localeCompare(b.account));
+
+    if (!matches.length) {
+      return "I do not see any $300K+ interest-form leads that have not booked a meeting.";
+    }
+
+    return [
+      `I found ${matches.length} $300K+ interest-form leads that have not booked a meeting:`,
+      ...matches.slice(0, 30).map(formatLeadListItem),
+      matches.length > 30 ? `And ${matches.length - 30} more.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   if (asksAboutMillionPlusNeverBooked(normalized)) {
     const matches = deals
       .filter(isMillionPlusLead)
@@ -792,6 +812,24 @@ function asksAboutMillionPlusNeverBooked(normalizedQuestion: string) {
   return mentionsMillionPlus && mentionsNeverBooked;
 }
 
+function asksAboutHighBudgetInterestFormNeverBooked(normalizedQuestion: string) {
+  const mentionsHighBudget =
+    /\b300\s*k\b/.test(normalizedQuestion) ||
+    /\$300\s*k/.test(normalizedQuestion) ||
+    /\b1\s*m\+?\b/.test(normalizedQuestion) ||
+    /\b1m\+?\b/.test(normalizedQuestion) ||
+    /\$1\s*m/.test(normalizedQuestion) ||
+    /\b1\s*million\+?\b/.test(normalizedQuestion);
+  const asksForPeopleOrList = /\b(list|people|who|which|give me|show)\b/.test(normalizedQuestion);
+  const mentionsInterestForm = /\b(interest form|form|filled|fill(ed)? up|submitted)\b/.test(normalizedQuestion);
+  const mentionsNeverBooked =
+    /\b(haven'?t|have not|hasn'?t|has not|never|not)\b/.test(normalizedQuestion) &&
+    /\b(booked|scheduled|had)\b/.test(normalizedQuestion) &&
+    /\b(call|meeting)\b/.test(normalizedQuestion);
+
+  return mentionsHighBudget && asksForPeopleOrList && mentionsInterestForm && mentionsNeverBooked;
+}
+
 function asksAboutInboundQualifiedLeads(normalizedQuestion: string) {
   return (
     /\binbound\b/.test(normalizedQuestion) &&
@@ -955,6 +993,32 @@ function isMillionPlusLead(deal: SalesDeal) {
 
   const budget = deal.budget.toLowerCase();
   return /\b\d+(?:\.\d+)?\s*(?:m|mm|million)\s*\+/.test(budget);
+}
+
+function isHighBudgetLead(deal: SalesDeal) {
+  if (deal.value >= 300_000) return true;
+
+  const budget = deal.budget.toLowerCase();
+  return (
+    /\b300\s*k\b/.test(budget) ||
+    /\$300\s*k/.test(budget) ||
+    /\b[3-9]\d{2}\s*k\b/.test(budget) ||
+    /\b\d+(?:\.\d+)?\s*(?:m|mm|million)\s*\+?/.test(budget)
+  );
+}
+
+function hasInterestFormSignal(deal: SalesDeal) {
+  const text = [
+    deal.group,
+    deal.source,
+    deal.initialOutreach,
+    deal.lookingFor,
+    deal.agentNotes,
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  return /\b(inbound|form|interest|website|submitted|facebook|instagram|linkedin|nas\.io|nas\.com)\b/.test(text);
 }
 
 function hasNeverBookedCall(deal: SalesDeal) {

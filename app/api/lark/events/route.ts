@@ -786,6 +786,7 @@ async function maybeHandleSalesMemoryCapture({
   boardId: string;
   deals: SalesDeal[];
 }) {
+  if (isReadOnlySalesQuestion(question.toLowerCase())) return "";
   if (!isSalesMemoryCaptureIntent(question)) return "";
 
   const matches = findDealMatches({ question, conversation: [], deals }).slice(0, 5);
