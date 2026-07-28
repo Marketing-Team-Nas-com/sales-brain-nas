@@ -422,6 +422,52 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
       .join("\n");
   }
 
+  if (asksForNoShowFitLeadList(normalized)) {
+    const ownerFilter = requestedOwner(normalized);
+    const countryFilter = requestedCountry(normalized);
+    const meetingDateFilter = requestedMeetingDateFilter(normalized, dateRange, singleCallDate);
+    const matches = salesCrmDeals(deals)
+      .filter((deal) => deal.callStage === "No Show")
+      .filter((deal) => deal.qualification === "Fit")
+      .filter((deal) => !ownerFilter || ownerMatches(deal, ownerFilter))
+      .filter((deal) => !countryFilter || countryMatches(deal, countryFilter))
+      .filter(
+        (deal) =>
+          !meetingDateFilter ||
+          dateFallsInRange(
+            dateOnly(deal.firstMeetingDate),
+            meetingDateFilter.startDate,
+            meetingDateFilter.endDate,
+          ),
+      )
+      .sort(
+        (a, b) =>
+          dateOnly(a.firstMeetingDate).localeCompare(dateOnly(b.firstMeetingDate)) ||
+          a.account.localeCompare(b.account),
+      );
+    const filters = [
+      countryFilter?.label ? `${countryFilter.label}` : "",
+      ownerFilter?.label ? `assigned to ${ownerFilter.label}` : "",
+      meetingDateFilter
+        ? meetingDateFilter.startDate === meetingDateFilter.endDate
+          ? `with first meeting on ${friendlyDate(meetingDateFilter.startDate)}`
+          : `with first meeting from ${friendlyDate(meetingDateFilter.startDate)} to ${friendlyDate(meetingDateFilter.endDate)}`
+        : "all time",
+    ].filter(Boolean);
+
+    if (!matches.length) {
+      return `I do not see any Fit leads with Call Stage = No Show (${filters.join(", ")}).`;
+    }
+
+    return [
+      `I found ${matches.length} Fit leads with Call Stage = No Show (${filters.join(", ")}):`,
+      ...matches.slice(0, 40).map(formatNoShowFitLeadLine),
+      matches.length > 40 ? `And ${matches.length - 40} more.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   if (asksAboutNoShowRate(normalized)) {
     const lines = [
       `In the last 7 days (${friendlyDate(noShowRate.startDate)} to ${friendlyDate(noShowRate.endDate)}), we had ${noShowRate.scheduledCount} calls scheduled and ${noShowRate.noShowCount} no-shows.`,
@@ -971,6 +1017,16 @@ function asksAboutNoShowRate(normalizedQuestion: string) {
   return (
     /\b(no\s*show|no-show|noshow)\b/.test(normalizedQuestion) &&
     /\b(rate|percentage|percent|how many|count|last week|last 7 days|past week)\b/.test(
+      normalizedQuestion,
+    )
+  );
+}
+
+function asksForNoShowFitLeadList(normalizedQuestion: string) {
+  return (
+    /\b(no\s*show|no-show|noshow)\b/.test(normalizedQuestion) &&
+    /\bfit\b/.test(normalizedQuestion) &&
+    /\b(list|show|give|get|which|who|where|all|names?|phone|number|from)\b/.test(
       normalizedQuestion,
     )
   );
@@ -1552,6 +1608,25 @@ function formatCallStatusItem(deal: SalesDeal) {
   ]
     .filter(Boolean)
     .join("\n");
+}
+
+function formatNoShowFitLeadLine(deal: SalesDeal) {
+  const note = compactNote(
+    deal.salesCallNotes || deal.agentNotes || deal.nextStep || deal.lookingFor || "",
+  );
+  const details = [
+    deal.email ? `Email: ${deal.email}` : "",
+    deal.country ? `From: ${deal.country}` : "From: not in CRM",
+    deal.phone ? `Phone: ${deal.phone}` : "Phone: not in CRM",
+    deal.owner && deal.owner !== "Unassigned" ? `Owner: ${deal.owner}` : "",
+    deal.firstMeetingDate ? `First meeting: ${friendlyDateTime(deal.firstMeetingDate)} SGT` : "",
+    `Call Stage: ${displayStatus(deal.callStage)}`,
+    `Qualification: ${displayStatus(deal.qualification)}`,
+    usableField(deal.website) ? `Website: ${deal.website}` : "",
+    note ? `Notes: ${note}` : "",
+  ].filter(Boolean);
+
+  return `- ${deal.account}: ${details.join("; ")}`;
 }
 
 function displayStatus(value: string) {
