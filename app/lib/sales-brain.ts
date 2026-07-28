@@ -179,17 +179,33 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
   if (asksForSalesQualifiedLeadList(normalized)) {
     const ownerFilter = requestedOwner(normalized);
     const countryFilter = requestedCountry(normalized);
+    const meetingDateFilter = requestedMeetingDateFilter(normalized, dateRange, singleCallDate);
     const matches = salesQualified
       .filter((deal) => !ownerFilter || ownerMatches(deal, ownerFilter))
       .filter((deal) => !countryFilter || countryMatches(deal, countryFilter))
+      .filter(
+        (deal) =>
+          !meetingDateFilter ||
+          dateFallsInRange(
+            dateOnly(deal.firstMeetingDate),
+            meetingDateFilter.startDate,
+            meetingDateFilter.endDate,
+          ),
+      )
       .sort(
         (a, b) =>
+          dateOnly(a.firstMeetingDate).localeCompare(dateOnly(b.firstMeetingDate)) ||
           displayStatus(a.nextStepsStatus).localeCompare(displayStatus(b.nextStepsStatus)) ||
           a.account.localeCompare(b.account),
       );
     const filters = [
       countryFilter?.label ? `${countryFilter.label}` : "",
       ownerFilter?.label ? `assigned to ${ownerFilter.label}` : "",
+      meetingDateFilter
+        ? meetingDateFilter.startDate === meetingDateFilter.endDate
+          ? `with first meeting on ${friendlyDate(meetingDateFilter.startDate)}`
+          : `with first meeting from ${friendlyDate(meetingDateFilter.startDate)} to ${friendlyDate(meetingDateFilter.endDate)}`
+        : "",
     ].filter(Boolean);
     const scope = filters.length ? ` ${filters.join(", ")}` : "";
 
@@ -1131,6 +1147,29 @@ function requestedOwner(normalizedQuestion: string) {
 function ownerMatches(deal: SalesDeal, owner: { tokens: string[] }) {
   const normalizedOwner = deal.owner.toLowerCase();
   return owner.tokens.some((token) => normalizedOwner.includes(token));
+}
+
+function requestedMeetingDateFilter(
+  normalizedQuestion: string,
+  range: { startDate: string; endDate: string } | null,
+  singleDate: string,
+) {
+  const mentionsMeetingDate =
+    /\b(first meeting|1st meeting|meeting date|call date)\b/.test(normalizedQuestion) ||
+    (/\b(call|calls|meeting|meetings)\b/.test(normalizedQuestion) &&
+      /\b(yesterday|today|tomorrow|from|since|between|on|\d{1,2}(?:st|nd|rd|th)?\s+[a-z]+|[a-z]+\s+\d{1,2})\b/.test(
+        normalizedQuestion,
+      ));
+
+  if (!mentionsMeetingDate) return null;
+  if (range) return range;
+  if (singleDate) return { startDate: singleDate, endDate: singleDate };
+
+  return null;
+}
+
+function dateFallsInRange(value: string, startDate: string, endDate: string) {
+  return Boolean(value && value >= startDate && value <= endDate);
 }
 
 function requestedCountry(normalizedQuestion: string) {
