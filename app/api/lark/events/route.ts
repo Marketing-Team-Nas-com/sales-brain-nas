@@ -300,6 +300,14 @@ function workingAcknowledgementFor(question: string, messageId: string) {
     return "";
   }
 
+  if (isMemoryOnlyCaptureQuestion(normalized)) {
+    return pickWorkingLine(messageId, [
+      "Got it - saving that to Sales Brain memory.",
+      "Noted - putting that in Sales Brain, no Monday gymnastics.",
+      "Copy that - saving the context for later.",
+    ]);
+  }
+
   if (/\b(move|update|change|set|put|make|mark|add|write|post|comment|note)\b/.test(normalized)) {
     return pickWorkingLine(messageId, [
       "Got it - checking the exact Monday record before I touch anything.",
@@ -1337,8 +1345,20 @@ async function maybeHandleSalesMemoryCapture({
   if (isReadOnlySalesQuestion(question.toLowerCase())) return "";
   if (!isSalesMemoryCaptureIntent(question)) return "";
 
-  const matches = findDealMatches({ question, conversation: [], deals }).slice(0, 5);
   const note = extractSalesMemoryNote(question);
+
+  if (!wantsCrmAttachedMemory(question)) {
+    await appendSalesContextNote({
+      threadId,
+      source: "lark",
+      rawText: question,
+      note,
+    });
+
+    return "Got it - I saved this in Sales Brain memory.";
+  }
+
+  const matches = findDealMatches({ question, conversation: [], deals }).slice(0, 5);
 
   if (!matches.length) {
     await appendSalesContextNote({
@@ -1426,10 +1446,30 @@ function isSalesMemoryCaptureIntent(question: string) {
   return (hasMemoryVerb && hasSalesSubject) || hasMeetingOutcome;
 }
 
+function isMemoryOnlyCaptureQuestion(normalizedQuestion: string) {
+  return (
+    /\b(remember|take\s+note|note\s+that|save|store|add to sales brain)\b/.test(
+      normalizedQuestion,
+    ) &&
+    !wantsCrmAttachedMemory(normalizedQuestion)
+  );
+}
+
+function wantsCrmAttachedMemory(question: string) {
+  const normalized = question.toLowerCase();
+  return (
+    /\b(add to crm|update crm|crm note|monday update|monday note|monday thread|crm record|attach|comment)\b/.test(
+      normalized,
+    ) ||
+    /\b(monday|crm)\b/.test(normalized) &&
+      /\b(thread|comment|update|write|post|attach|record)\b/.test(normalized)
+  );
+}
+
 function extractSalesMemoryNote(question: string) {
   return question
     .replace(
-      /^\s*(remember|note|memorize|save|store|context|add to sales brain|add to crm|update crm|crm note|sales note)\s*(this|that|for)?\s*[:,-]?\s*/i,
+      /^\s*(remember|take note|note|memorize|save|store|context|add to sales brain|add to crm|update crm|crm note|sales note)\s*(this|that|for)?\s*[:,-]?\s*/i,
       "",
     )
     .trim();
