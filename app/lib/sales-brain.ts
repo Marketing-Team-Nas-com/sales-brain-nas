@@ -215,7 +215,7 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
 
     return [
       `I found ${matches.length}${scope} leads currently at Sales Qualified:`,
-      ...matches.slice(0, 25).map(formatSalesQualifiedLeadLine),
+      ...matches.slice(0, 25).map((deal) => formatSalesQualifiedLeadLine(deal, Boolean(meetingDateFilter))),
       matches.length > 25 ? `And ${matches.length - 25} more.` : "",
     ]
       .filter(Boolean)
@@ -1003,7 +1003,7 @@ function asksForSalesQualifiedLeadList(normalizedQuestion: string) {
   return (
     /\b(list|show|give|get|which|who)\b/.test(normalizedQuestion) &&
     /\b(qualified|sql|sales qualified)\b/.test(normalizedQuestion) &&
-    /\b(lead|leads|records|clients)\b/.test(normalizedQuestion)
+    /\b(lead|leads|records|clients|call|calls|meeting|meetings)\b/.test(normalizedQuestion)
   );
 }
 
@@ -1189,13 +1189,14 @@ function countryMatches(deal: SalesDeal, country: { tokens: string[] }) {
   return country.tokens.some((token) => normalizedCountry.includes(normalizeSearch(token)));
 }
 
-function formatSalesQualifiedLeadLine(deal: SalesDeal) {
+function formatSalesQualifiedLeadLine(deal: SalesDeal, includeMeetingDate = false) {
   const contact = [deal.firstName, deal.lastName].filter(usableField).join(" ");
   const details = [
     contact ? contact : "",
     deal.email ? deal.email : "",
     deal.country ? deal.country : "",
     deal.owner && deal.owner !== "Unassigned" ? `owner ${deal.owner}` : "",
+    includeMeetingDate && deal.firstMeetingDate ? `First meeting: ${friendlyDateTime(deal.firstMeetingDate)} SGT` : "",
     `Current stage: Sales Qualified`,
     displayStatus(deal.nextStepsStatus) !== "Not set"
       ? `Next Steps: ${displayStatus(deal.nextStepsStatus)}`
