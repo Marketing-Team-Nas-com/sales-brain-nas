@@ -1221,6 +1221,7 @@ function descriptionForUpdateKind(kind?: PendingMondayAction["disambiguation"]["
   if (kind === "lost") return "moved Final verdict to Lost";
   if (kind === "signed-stage") return "moved Final verdict to Signed";
   if (kind === "agreement-stage") return "moved Final verdict to Agreement Stage";
+  if (kind === "second-call-booked") return "moved Final verdict to 2nd call booked";
   if (kind === "meeting-booked") return "moved Call Stage to Meeting Booked";
   if (kind === "sales-qualified") return "moved Call Stage to Sales Qualified";
   if (kind === "sales-qualified-proposal") {
@@ -1279,7 +1280,14 @@ async function columnValuesForUpdateKind(
 
   return {
     [finalVerdictColumnIdFor(deal)]: {
-      label: kind === "lost" ? "Lost" : kind === "signed-stage" ? "Signed" : "Agreement Stage",
+      label:
+        kind === "lost"
+          ? "Lost"
+          : kind === "signed-stage"
+            ? "Signed"
+            : kind === "second-call-booked"
+              ? "2nd call booked"
+              : "Agreement Stage",
     },
   };
 }
@@ -1503,6 +1511,12 @@ function mondayUpdateIntent(
   const contextMentionsSigned = /\b(signed|sign(?:ed|ature)?|closed won|won)\b/.test(combined);
   const currentMentionsLost = /\blost\b/.test(normalized);
   const contextMentionsLost = /\blost\b/.test(combined);
+  const currentMentionsSecondCallBooked =
+    /\b(?:2nd|second)\s+call\b.*\bbook(?:ed|ing)?\b/.test(normalized) ||
+    /\bbook(?:ed|ing)?\b.*\b(?:2nd|second)\s+call\b/.test(normalized);
+  const contextMentionsSecondCallBooked =
+    /\b(?:2nd|second)\s+call\b.*\bbook(?:ed|ing)?\b/.test(combined) ||
+    /\bbook(?:ed|ing)?\b.*\b(?:2nd|second)\s+call\b/.test(combined);
   const currentMentionsMeetingBooked =
     /\b(meeting\s+booked|booked\s+(?:a\s+)?meeting)\b/.test(normalized);
   const contextMentionsMeetingBooked =
@@ -1534,6 +1548,20 @@ function mondayUpdateIntent(
     (recentMessageHadUpdateVerb && currentMessageLooksLikeSelection && currentMessageLooksShort);
 
   if (!isUpdate) return null;
+
+  if (
+    currentMentionsSecondCallBooked ||
+    (!currentMentionsAgreement &&
+      !currentMentionsMeetingBooked &&
+      !currentMentionsSigned &&
+      contextMentionsSecondCallBooked)
+  ) {
+    return {
+      kind: "second-call-booked",
+      description: "moved Final verdict to 2nd call booked",
+      confirmationText: "move Final verdict to 2nd call booked in monday",
+    };
+  }
 
   if (
     currentMentionsProposalDone ||
@@ -1832,6 +1860,8 @@ async function columnValuesForUpdateIntent(
           ? "Lost"
           : updateIntent.kind === "signed-stage"
             ? "Signed"
+            : updateIntent.kind === "second-call-booked"
+              ? "2nd call booked"
             : "Agreement Stage",
     },
   };

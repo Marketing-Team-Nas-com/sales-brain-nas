@@ -77,6 +77,7 @@ export type PendingMondayAction = {
       | "lost"
       | "signed-stage"
       | "agreement-stage"
+      | "second-call-booked"
       | "meeting-booked"
       | "sales-qualified"
       | "sales-qualified-proposal"
