@@ -29,6 +29,7 @@ export type SalesDeal = {
   firstName: string;
   lastName: string;
   country: string;
+  eventPlace: string;
   jobTitle: string;
   website: string;
   phone: string;
@@ -374,6 +375,7 @@ function normalizeDeals(board: {
       "";
     const owner =
       firstPresent([valueFor(columns.owner), valueForTitle("Assigned To", "Owner")]) || "Unassigned";
+    const eventPlace = valueForTitle("Event Place", "Dinner Place", "Dinner Location") || "";
     const firstName = firstPresent([valueFor(columns.firstName), valueForTitle("First Name")]) || "";
     const lastName = firstPresent([valueFor(columns.lastName), valueForTitle("Last Name")]) || "";
     const website = firstPresent([valueFor(columns.website), valueForTitle("Website")]) || "";
@@ -463,7 +465,8 @@ function normalizeDeals(board: {
       email: valueFor(columns.email),
       firstName,
       lastName,
-      country: valueFor(columns.country),
+      country: firstPresent([valueFor(columns.country), countryFromEventPlace(eventPlace)]) || "",
+      eventPlace,
       jobTitle: valueFor(columns.jobTitle),
       website,
       phone,
@@ -511,6 +514,16 @@ function verdictFromNotes(notes: string) {
   if (text.startsWith("not fit") || text.includes("\nnot fit")) return "Not Fit";
   if (text.startsWith("fit") || text.includes("\nfit")) return "Fit";
   if (text.startsWith("review") || text.includes("\nreview")) return "Review";
+
+  return "";
+}
+
+function countryFromEventPlace(eventPlace: string) {
+  const normalized = eventPlace.toLowerCase();
+
+  if (normalized.includes("singapore")) return "Singapore";
+  if (normalized.includes("tel aviv")) return "Israel";
+  if (normalized.includes("miami")) return "United States";
 
   return "";
 }
