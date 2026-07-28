@@ -176,6 +176,59 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
     return `We have ${outboundSalesQualified.length} outbound sales qualified leads right now.`;
   }
 
+  if (asksForFitHappenedCallsForReview(normalized)) {
+    const ownerFilter = requestedOwner(normalized);
+    const countryFilter = requestedCountry(normalized);
+    const meetingDateFilter = requestedMeetingDateFilter(normalized, dateRange, singleCallDate);
+    const matches = salesCrmDeals(deals)
+      .filter((deal) => deal.qualification === "Fit")
+      .filter((deal) => ["Sales Qualified", "In Review"].includes(deal.callStage))
+      .filter(isHappenedCall)
+      .filter((deal) => !ownerFilter || ownerMatches(deal, ownerFilter))
+      .filter((deal) => !countryFilter || countryMatches(deal, countryFilter))
+      .filter(
+        (deal) =>
+          !meetingDateFilter ||
+          dateFallsInRange(
+            dateOnly(deal.firstMeetingDate),
+            meetingDateFilter.startDate,
+            meetingDateFilter.endDate,
+          ),
+      )
+      .sort(
+        (a, b) =>
+          displayStatus(a.callStage).localeCompare(displayStatus(b.callStage)) ||
+          dateOnly(a.firstMeetingDate).localeCompare(dateOnly(b.firstMeetingDate)) ||
+          a.account.localeCompare(b.account),
+      );
+    const filters = [
+      countryFilter?.label ? `${countryFilter.label}` : "",
+      ownerFilter?.label ? `assigned to ${ownerFilter.label}` : "",
+      meetingDateFilter
+        ? meetingDateFilter.startDate === meetingDateFilter.endDate
+          ? `with first meeting on ${friendlyDate(meetingDateFilter.startDate)}`
+          : `with first meeting from ${friendlyDate(meetingDateFilter.startDate)} to ${friendlyDate(meetingDateFilter.endDate)}`
+        : "",
+    ].filter(Boolean);
+    const scope = filters.length ? ` ${filters.join(", ")}` : "";
+    const salesQualifiedMatches = matches.filter((deal) => deal.callStage === "Sales Qualified");
+    const inReviewMatches = matches.filter((deal) => deal.callStage === "In Review");
+
+    if (!matches.length) {
+      return `I do not see any${scope} Fit leads with a happened call that are Sales Qualified or In Review.`;
+    }
+
+    return [
+      `I found ${matches.length}${scope} Fit leads with a happened call that are Sales Qualified or In Review:`,
+      `- Sales Qualified: ${salesQualifiedMatches.length}`,
+      `- In Review: ${inReviewMatches.length}`,
+      ...matches.slice(0, 30).map(formatReviewableFitCallLine),
+      matches.length > 30 ? `And ${matches.length - 30} more.` : "",
+    ]
+      .filter(Boolean)
+      .join("\n");
+  }
+
   if (asksForSalesQualifiedLeadList(normalized)) {
     const ownerFilter = requestedOwner(normalized);
     const countryFilter = requestedCountry(normalized);
@@ -1007,6 +1060,19 @@ function asksForSalesQualifiedLeadList(normalizedQuestion: string) {
   );
 }
 
+function asksForFitHappenedCallsForReview(normalizedQuestion: string) {
+  const asksForList = /\b(list|show|give|get|which|who|all)\b/.test(normalizedQuestion);
+  const mentionsFit = /\bfit\b/.test(normalizedQuestion);
+  const mentionsHappenedCall =
+    /\b(call|calls|meeting|meetings)\b/.test(normalizedQuestion) &&
+    /\b(happened|had|taken|took|completed|done)\b/.test(normalizedQuestion);
+  const mentionsReviewableOutcome =
+    /\b(sales qualified|qualified|sql)\b/.test(normalizedQuestion) &&
+    /\b(in review|review)\b/.test(normalizedQuestion);
+
+  return asksForList && mentionsFit && mentionsHappenedCall && mentionsReviewableOutcome;
+}
+
 function asksAboutCmoDinner(normalizedQuestion: string) {
   return (
     /\bcmo\b/.test(normalizedQuestion) ||
@@ -1204,6 +1270,24 @@ function formatSalesQualifiedLeadLine(deal: SalesDeal, includeMeetingDate = fals
     displayStatus(deal.finalVerdict) !== "Not set"
       ? `Final verdict: ${displayStatus(deal.finalVerdict)}`
       : "",
+  ].filter(Boolean);
+
+  return `- ${deal.account}: ${details.join("; ")}`;
+}
+
+function formatReviewableFitCallLine(deal: SalesDeal) {
+  const contact = [deal.firstName, deal.lastName].filter(usableField).join(" ");
+  const details = [
+    contact ? contact : "",
+    deal.email ? deal.email : "",
+    deal.country ? deal.country : "",
+    deal.owner && deal.owner !== "Unassigned" ? `owner ${deal.owner}` : "",
+    deal.firstMeetingDate ? `First meeting: ${friendlyDateTime(deal.firstMeetingDate)} SGT` : "",
+    `Call Stage: ${displayStatus(deal.callStage)}`,
+    displayStatus(deal.nextStepsStatus) !== "Not set"
+      ? `Next Steps: ${displayStatus(deal.nextStepsStatus)}`
+      : "",
+    usableField(deal.website) ? `Website: ${deal.website}` : "",
   ].filter(Boolean);
 
   return `- ${deal.account}: ${details.join("; ")}`;
