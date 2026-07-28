@@ -426,9 +426,11 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
     const ownerFilter = requestedOwner(normalized);
     const countryFilter = requestedCountry(normalized);
     const meetingDateFilter = requestedMeetingDateFilter(normalized, dateRange, singleCallDate);
+    const hasBudgetFilter = asksForBudgetFilter(normalized);
     const matches = salesCrmDeals(deals)
       .filter((deal) => deal.callStage === "No Show")
       .filter((deal) => deal.qualification === "Fit")
+      .filter((deal) => !hasBudgetFilter || budgetMatchesRequestedBands(deal, normalized))
       .filter((deal) => !ownerFilter || ownerMatches(deal, ownerFilter))
       .filter((deal) => !countryFilter || countryMatches(deal, countryFilter))
       .filter(
@@ -448,6 +450,7 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
     const filters = [
       countryFilter?.label ? `${countryFilter.label}` : "",
       ownerFilter?.label ? `assigned to ${ownerFilter.label}` : "",
+      hasBudgetFilter ? `budget ${requestedBudgetLabel(normalized)}` : "",
       meetingDateFilter
         ? meetingDateFilter.startDate === meetingDateFilter.endDate
           ? `with first meeting on ${friendlyDate(meetingDateFilter.startDate)}`
@@ -1366,11 +1369,20 @@ function dealBudgetBand(deal: SalesDeal) {
   if (/1m\+/.test(budget) || /\$1m\+/.test(budget) || /1million\+/.test(budget)) {
     return "million-plus";
   }
+  if (/100k-?\$?1m/.test(budget) || /\$100k-?\$?1m/.test(budget)) {
+    return "unknown";
+  }
   if (/300k-?\$?1m/.test(budget) || /\$300k-?\$?1m/.test(budget)) {
     return "300k-to-1m";
   }
+  if (/500k-?\$?1m/.test(budget) || /\$500k-?\$?1m/.test(budget)) {
+    return "300k-to-1m";
+  }
   if (/\b[3-9]\d{2}k\+?/.test(budget)) return "300k-to-1m";
-  if (/\d+(?:\.\d+)?(?:m|mm|million)\+?/.test(budget)) return "million-plus";
+  if (/\d+(?:\.\d+)?(?:m|mm|million)\+/.test(budget)) return "million-plus";
+  if (/^\$?\d+(?:\.\d+)?(?:m|mm|million)(?:\/year)?$/.test(budget)) {
+    return "million-plus";
+  }
 
   if (deal.value >= 1_000_000) return "million-plus";
   if (deal.value >= 300_000) return "300k-to-1m";
@@ -1394,6 +1406,19 @@ function budgetMatchesRequestedBands(deal: SalesDeal, normalizedQuestion: string
   if (wantsMidMarket) return isHighBudgetLead(deal) && !isMillionPlusLead(deal);
 
   return isHighBudgetLead(deal);
+}
+
+function asksForBudgetFilter(normalizedQuestion: string) {
+  return (
+    /\bbudget\b/.test(normalizedQuestion) ||
+    /\b300\s*k\b/.test(normalizedQuestion) ||
+    /\b300k\s*-\s*1m\b/.test(normalizedQuestion) ||
+    /\b300\s*k\s*(?:to|-)\s*1\s*m\b/.test(normalizedQuestion) ||
+    /\b1\s*m\+?\b/.test(normalizedQuestion) ||
+    /\b1m\+?\b/.test(normalizedQuestion) ||
+    /\$1\s*m/.test(normalizedQuestion) ||
+    /\b1\s*million\+?\b/.test(normalizedQuestion)
+  );
 }
 
 function requestedBudgetLabel(normalizedQuestion: string) {
