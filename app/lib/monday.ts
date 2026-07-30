@@ -1,3 +1,9 @@
+import {
+  preserveAndParseMondayUpdates,
+  type MondayItemUpdate,
+  type ParsedSalesPulseUpdate,
+} from "./sales-pulse";
+
 const MONDAY_API_URL = "https://api.monday.com/v2";
 
 export type SalesDeal = {
@@ -40,6 +46,8 @@ export type SalesDeal = {
   salesCallNotes: string;
   source: string;
   mondayUrl: string;
+  mondayUpdates?: MondayItemUpdate[];
+  salesPulseUpdates?: ParsedSalesPulseUpdate[];
 };
 
 type MondayRequest = {
@@ -162,10 +170,14 @@ export async function getBoardSnapshot(boardId: string) {
                   }
                 }
               }
-              updates(limit: 3) {
+              updates(limit: 10) {
                 id
                 body
                 created_at
+                creator {
+                  id
+                  name
+                }
               }
             }
           }
@@ -225,10 +237,14 @@ async function getNextItemsPage(cursor: string) {
                   }
                 }
               }
-            updates(limit: 3) {
+            updates(limit: 10) {
               id
               body
               created_at
+              creator {
+                id
+                name
+              }
             }
           }
         }
@@ -262,7 +278,7 @@ type MondayItem = {
     type: string;
     battery_value?: Array<{ key: string; count: number }> | null;
   }>;
-  updates?: Array<{ id: string; body: string; created_at: string }>;
+  updates?: MondayItemUpdate[];
 };
 
 const columns = {
@@ -305,6 +321,9 @@ function normalizeDeals(board: {
   );
 
   return board.items_page.items.map((item) => {
+    const { mondayUpdates, salesPulseUpdates } = preserveAndParseMondayUpdates(
+      item.updates,
+    );
     const valueFor = (columnId: string) => {
       const column = item.column_values.find((value) => value.id === columnId);
       if (!column) return "";
@@ -482,6 +501,8 @@ function normalizeDeals(board: {
           item.group?.title,
         ]) || "Unknown",
       mondayUrl: `https://nas-io.monday.com/boards/${board.id}/pulses/${item.id}`,
+      mondayUpdates,
+      salesPulseUpdates,
     } satisfies SalesDeal;
   });
 }
