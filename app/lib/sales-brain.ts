@@ -52,6 +52,7 @@ export async function answerSalesQuestion({
 
   if (
     asksAboutBudgetNoBookedLeads(normalized) ||
+    asksAboutNewBudgetLeads(normalized) ||
     asksAboutCallsInDateRange(normalized) ||
     asksAboutCallsOnSpecificDate(normalized) ||
     asksAboutFitLeadsCreatedInRange(normalized) ||
@@ -281,8 +282,10 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
 
   if (asksAboutNewBudgetLeads(normalized)) {
     const range = requestedLeadCreatedDateRange(normalized);
+    const wantsFitOnly = asksForFitQualification(normalized);
     const matches = deals
       .filter((deal) => budgetMatchesRequestedBands(deal, normalized))
+      .filter((deal) => !wantsFitOnly || deal.qualification === "Fit")
       .filter((deal) => dealFallsInDateRange(deal, range.startDate, range.endDate))
       .sort(
         (a, b) =>
@@ -292,17 +295,30 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
       );
     const millionPlus = matches.filter(isMillionPlusLead);
     const midBudget = matches.filter((deal) => dealBudgetBand(deal) === "300k-to-1m");
+    const excludedForQualification = wantsFitOnly
+      ? deals
+          .filter((deal) => budgetMatchesRequestedBands(deal, normalized))
+          .filter((deal) => deal.qualification && deal.qualification !== "Fit")
+          .filter((deal) => dealFallsInDateRange(deal, range.startDate, range.endDate))
+      : [];
     const rangeText =
       range.startDate === range.endDate
         ? `on ${friendlyDate(range.startDate)}`
         : `from ${friendlyDate(range.startDate)} to ${friendlyDate(range.endDate)}`;
+    const qualificationText = wantsFitOnly ? " Fit" : "";
 
     if (!matches.length) {
-      return `I do not see any new ${requestedBudgetLabel(normalized)} leads ${rangeText}.`;
+      const excludedText = excludedForQualification.length
+        ? ` I excluded ${excludedForQualification.length} high-budget lead${excludedForQualification.length === 1 ? "" : "s"} because the Monday Qualification column is not Fit: ${excludedForQualification
+            .slice(0, 8)
+            .map((deal) => `${deal.account} (${deal.qualification})`)
+            .join(", ")}.`
+        : "";
+      return `I do not see any new${qualificationText} ${requestedBudgetLabel(normalized)} leads ${rangeText}.${excludedText}`;
     }
 
     return [
-      `I found ${matches.length} new ${requestedBudgetLabel(normalized)} leads ${rangeText}:`,
+      `I found ${matches.length} new${qualificationText} ${requestedBudgetLabel(normalized)} leads ${rangeText}:`,
       `- $300K-$1M: ${midBudget.length}`,
       `- $1M+: ${millionPlus.length}`,
       ...matches
@@ -312,6 +328,12 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
             `- ${deal.account}: ${deal.budget}, ${deal.qualification || "no qualification"}, ${deal.country || "no country"}${deal.email ? `, ${deal.email}` : ""}`,
         ),
       matches.length > 20 ? `And ${matches.length - 20} more.` : "",
+      excludedForQualification.length
+        ? `Excluded because Qualification is not Fit: ${excludedForQualification
+            .slice(0, 8)
+            .map((deal) => `${deal.account} (${deal.qualification})`)
+            .join(", ")}${excludedForQualification.length > 8 ? `, and ${excludedForQualification.length - 8} more` : ""}.`
+        : "",
     ]
       .filter(Boolean)
       .join("\n");
@@ -1750,7 +1772,18 @@ function asksAboutFitLeadsCreatedInRange(normalized: string) {
   return (
     /\b(fit|classified as fit|qualification)\b/.test(normalized) &&
     /\b(came in|come in|came|added|new leads?|leads came|leads added)\b/.test(normalized) &&
-    /\b(from|since|between|after|on)\b/.test(normalized)
+    /\b(from|since|between|after|on|today|yesterday|this week|last week|last \d+ days?|past \d+ days?)\b/.test(
+      normalized,
+    )
+  );
+}
+
+function asksForFitQualification(normalized: string) {
+  if (/\bnot fit\b/.test(normalized)) return false;
+  return (
+    /\bfit\b/.test(normalized) ||
+    /\bqualification\s*[:=]?\s*fit\b/.test(normalized) ||
+    /\bagent qualification\b/.test(normalized)
   );
 }
 
