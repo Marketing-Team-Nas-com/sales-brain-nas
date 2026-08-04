@@ -97,8 +97,13 @@ export function buildExecutiveSalesPulseLarkBlocks(
           },
         ]),
     { type: "divider" },
-    { type: "heading1", text: "Updates Since the Last Report" },
-    ...promisingUpdateBlocks(report),
+    { type: "heading1", text: changedSinceHeading(report) },
+    { type: "heading2", text: "Interesting Conversations" },
+    ...interestingConversationBlocks(report),
+    { type: "heading2", text: "Meaningful Forward Movement" },
+    ...forwardMovementBlocks(report),
+    { type: "heading2", text: "Issues and Follow-ups" },
+    ...issueAndFollowUpBlocks(report),
     { type: "divider" },
     { type: "heading1", text: "Leadership Attention" },
     ...asBullets(
@@ -162,32 +167,105 @@ function prioritySummary(report: ExecutiveReport) {
     : "No Proposal Done opportunities with a non-Signed verdict were identified; leadership should focus on traceable next-step movement and complete Monday updates.";
 }
 
-function promisingUpdateBlocks(report: ExecutiveReport): LarkReportBlock[] {
-  const deals = report.salesQualifiedWindowDeals
+function changedSinceHeading(report: ExecutiveReport) {
+  return report.window.cadence === "Tuesday"
+    ? "What Changed Since Last Thursday"
+    : report.window.cadence === "Thursday"
+      ? "What Changed Since Tuesday"
+      : "What Changed Since the Last Report";
+}
+
+function interestingConversationBlocks(report: ExecutiveReport): LarkReportBlock[] {
+  const deals = report.salesQualifiedCalls
     .filter(
       (deal) =>
         deal.customerIntent !== false &&
-        deal.salespersonRecommendation !== false &&
-        Boolean(deal.salesAgentNotes || deal.meetingNotes),
+        deal.salespersonRecommendation !== false,
     )
-    .slice(0, 4);
+    .slice(0, 5);
   if (!deals.length) {
     return [{
       type: "text",
-      text: "No promising update with a traceable positive salesperson or meeting-note signal was available.",
+      text: "No completed questionnaire with a positive or non-negative meeting signal was recorded in this window.",
     }];
   }
   return deals.map((deal) => ({
     type: "text",
-    text: `• ${deal.company}: ${noteExcerpt(deal)}`,
+    text: `• ${deal.company} - ${interestingConversationSummary(deal)}`,
   }));
 }
 
-function noteExcerpt(deal: ExecutiveSalesPulseDeal) {
-  const note = (deal.salesAgentNotes || deal.meetingNotes || "")
+function interestingConversationSummary(deal: ExecutiveSalesPulseDeal) {
+  const facts = [
+    deal.crmVerdict || "Sales Qualified",
+    `budget: ${budget(deal)}`,
+    `next-stage interest: ${signalLabel(deal.customerIntent)}`,
+    `salesperson recommendation: ${signalLabel(deal.salespersonRecommendation)}`,
+  ];
+  const note = (deal.meetingNotes || "")
     .replace(/\s+/g, " ")
     .trim();
-  return note.length > 300 ? `${note.slice(0, 297)}...` : note;
+  if (note) {
+    facts.push(`meeting note: ${note.length > 180 ? `${note.slice(0, 177)}...` : note}`);
+  }
+  return `${facts.join("; ")}.`;
+}
+
+function signalLabel(value: boolean | null) {
+  return value === true ? "Yes" : value === false ? "No" : "Unknown";
+}
+
+function forwardMovementBlocks(report: ExecutiveReport): LarkReportBlock[] {
+  const values = report.pipelineHealthPresentation.highlights.filter(
+    (text) => !/^No accounts/i.test(text),
+  );
+  return asBullets(
+    values,
+    "No traceable forward-stage movement was recorded in this window.",
+  );
+}
+
+function issueAndFollowUpBlocks(report: ExecutiveReport): LarkReportBlock[] {
+  const issues: string[] = [];
+  if (report.latestNegativeMovementDeals.length) {
+    issues.push(
+      `${report.latestNegativeMovementDeals.length} ${report.latestNegativeMovementDeals.length === 1 ? "account ended" : "accounts ended"} the window at Lost or Gone Cold: ${companyNames(report.latestNegativeMovementDeals)}.`,
+    );
+  }
+  if (report.noShowWindowDeals.length) {
+    issues.push(
+      `${report.noShowWindowDeals.length} ${report.noShowWindowDeals.length === 1 ? "account was" : "accounts were"} moved to No-show: ${companyNames(report.noShowWindowDeals)}.`,
+    );
+  }
+  const negativeQuestionnaires = report.salesQualifiedCalls.filter(
+    (deal) =>
+      deal.customerIntent === false || deal.salespersonRecommendation === false,
+  );
+  for (const deal of negativeQuestionnaires.slice(0, 3)) {
+    const signals = [
+      deal.customerIntent === false ? "negative next-stage intent" : "",
+      deal.salespersonRecommendation === false
+        ? "negative salesperson recommendation"
+        : "",
+    ].filter(Boolean);
+    issues.push(`${deal.company} - questionnaire recorded ${signals.join(" and ")}.`);
+  }
+  const missingNextSteps = report.salesQualifiedCalls.filter(
+    (deal) => !deal.nextStepStatus,
+  );
+  if (missingNextSteps.length) {
+    issues.push(
+      `${missingNextSteps.length} completed ${missingNextSteps.length === 1 ? "conversation has" : "conversations have"} no recorded Next Steps value: ${companyNames(missingNextSteps)}.`,
+    );
+  }
+  return asBullets(
+    issues.slice(0, 6),
+    "No traceable loss, no-show, negative questionnaire signal, or missing post-call next step was recorded in this window.",
+  );
+}
+
+function companyNames(deals: ExecutiveSalesPulseDeal[]) {
+  return deals.map((deal) => deal.company).join(", ");
 }
 
 function asBullets(values: string[], empty: string): LarkReportBlock[] {

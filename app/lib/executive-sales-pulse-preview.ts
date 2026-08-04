@@ -276,6 +276,15 @@ export function buildExecutiveSalesPulseReport({
       windowCallActivities.filter((activity) => activity.stage === stage).length,
     ]),
   ) as Record<CallStage, number>;
+  const dealsForCallActivity = (stage: CallStage) => {
+    const ids = new Set(
+      windowCallActivities
+        .filter((activity) => activity.stage === stage)
+        .map((activity) => activity.dealId),
+    );
+    return deals.filter((deal) => ids.has(deal.id));
+  };
+  const noShowWindowDeals = dealsForCallActivity("No-show");
   const hotOpportunities = deals.filter(isHotOpportunity);
   const activeDeals = deals.filter((deal) => !TERMINAL_STAGES.has(deal.stage));
   const salesQualifiedDeals = deals.filter(isSalesQualified);
@@ -618,6 +627,7 @@ export function buildExecutiveSalesPulseReport({
     newLeads,
     newLeadBreakdown,
     callStageSnapshot,
+    noShowWindowDeals,
     activeDeals,
     salesQualifiedDeals,
     activeSalesQualifiedDeals,

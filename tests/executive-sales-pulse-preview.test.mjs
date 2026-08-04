@@ -259,7 +259,10 @@ test("builds a Lark-native report from headings, text, dividers, and tables", ()
   assert.doesNotMatch(JSON.stringify(blocks), /Northwind Atelier/);
   assert.match(JSON.stringify(blocks), /Pipeline Health/);
   assert.match(JSON.stringify(blocks), /Priority Closing Opportunities/);
-  assert.match(JSON.stringify(blocks), /Updates Since the Last Report/);
+  assert.match(JSON.stringify(blocks), /What Changed Since Tuesday/);
+  assert.match(JSON.stringify(blocks), /Interesting Conversations/);
+  assert.match(JSON.stringify(blocks), /Meaningful Forward Movement/);
+  assert.match(JSON.stringify(blocks), /Issues and Follow-ups/);
   assert.match(JSON.stringify(blocks), /Leadership Attention/);
   assert.match(JSON.stringify(blocks), /Calls and Conversion Snapshot/);
   assert.match(JSON.stringify(blocks), /Monday Hygiene and Follow-up Exceptions/);
