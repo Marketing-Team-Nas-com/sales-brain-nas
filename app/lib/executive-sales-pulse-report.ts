@@ -5,7 +5,10 @@ import {
   sendLarkTextReport,
 } from "./lark.ts";
 import { getBoardActivityChanges, getBoardSnapshot } from "./monday.ts";
-import { buildExecutiveSalesPulseLarkBlocks } from "./executive-sales-pulse-lark.ts";
+import {
+  buildExecutiveSalesPulseLarkBlocks,
+  dateRange,
+} from "./executive-sales-pulse-lark.ts";
 import { executiveSalesPulseFromMonday } from "./executive-sales-pulse-monday.ts";
 import {
   buildExecutiveSalesPulseReport,
@@ -48,7 +51,7 @@ export async function createExecutiveSalesPulseReport({
   const fixture = executiveSalesPulseFromMonday({ deals, window, activityChanges });
   const report = buildExecutiveSalesPulseReport({ fixture, generatedAt, window });
   const document = await createLarkDocument({
-    title: `Executive Sales Pulse — ${window.cadence}`,
+    title: `Executive Sales Report - ${dateRange(window.start, window.end)}`,
   });
   await appendLarkReportBlocks({
     documentId: document.documentId,
@@ -59,7 +62,7 @@ export async function createExecutiveSalesPulseReport({
   if (sendToChat && targetChatId) {
     await sendLarkTextReport({
       chatId: targetChatId,
-      text: `Executive Sales Pulse\nReporting window: ${window.start} through ${window.end} SGT\n${document.url}`,
+      text: `Executive Sales Report\nReporting window: ${dateRange(window.start, window.end)} SGT\n${document.url}`,
     });
   }
 

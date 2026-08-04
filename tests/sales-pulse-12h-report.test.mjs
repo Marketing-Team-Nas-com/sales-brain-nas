@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { pulseWindowFor } from "../app/lib/sales-pulse-12h-report.ts";
+import {
+  formatPulseDateRange,
+  pulseWindowFor,
+} from "../app/lib/sales-pulse-12h-report.ts";
+
+test("formats pulse chat windows as dates only", () => {
+  assert.equal(
+    formatPulseDateRange(
+      "2026-08-03T21:00:00+08:00",
+      "2026-08-04T09:00:00+08:00",
+    ),
+    "3 Aug 2026 - 4 Aug 2026",
+  );
+});
 
 test("uses a 12-hour window for ordinary 9 AM and 9 PM pulses", () => {
   assert.deepEqual(pulseWindowFor("2026-08-04T09:00:00+08:00"), {

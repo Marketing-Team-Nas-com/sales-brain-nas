@@ -119,7 +119,7 @@ function buildPulsePost(
 ): LarkPostElement[][] {
   const rows: LarkPostElement[][] = [
     [{ tag: "text", text: "SALES PULSE", style: ["bold"] }],
-    [{ tag: "text", text: `Reporting window: ${formatSgt(window.start)} to ${formatSgt(window.end)}` }],
+    [{ tag: "text", text: `Reporting window: ${formatPulseDateRange(window.start, window.end)} SGT` }],
     [],
     [{ tag: "text", text: "NEXT STEPS", style: ["bold", "underline"] }],
   ];
@@ -165,4 +165,16 @@ function formatSgt(value: string) {
     timeZone: "Asia/Singapore", month: "short", day: "numeric", year: "numeric",
     hour: "numeric", minute: "2-digit", hour12: true,
   }).format(new Date(value)) + " SGT";
+}
+
+export function formatPulseDateRange(start: string, end: string) {
+  const formatter = new Intl.DateTimeFormat("en-GB", {
+    timeZone: "Asia/Singapore",
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+  const startLabel = formatter.format(new Date(start));
+  const endLabel = formatter.format(new Date(end));
+  return startLabel === endLabel ? startLabel : `${startLabel} - ${endLabel}`;
 }

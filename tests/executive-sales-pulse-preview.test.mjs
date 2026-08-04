@@ -18,7 +18,15 @@ import {
 } from "../prototype/executive-sales-pulse-fixtures.ts";
 import {
   buildExecutiveSalesPulseLarkBlocks,
+  dateRange,
 } from "../app/lib/executive-sales-pulse-lark.ts";
+
+test("formats executive chat windows as dates only", () => {
+  assert.equal(
+    dateRange("2026-07-30T00:00:00+08:00", "2026-08-03T23:59:59+08:00"),
+    "30 Jul 2026 - 3 Aug 2026",
+  );
+});
 
 test("calculates Tuesday and Thursday reporting windows in SGT", () => {
   assert.deepEqual(reportingWindowFor("2026-08-04T14:00:00+08:00"), {
@@ -247,11 +255,15 @@ test("builds a Lark-native report from headings, text, dividers, and tables", ()
     ),
     false,
   );
-  assert.match(JSON.stringify(blocks), /All-Time Board Snapshot/);
+  assert.match(JSON.stringify(blocks), /Executive Summary/);
   assert.doesNotMatch(JSON.stringify(blocks), /Northwind Atelier/);
   assert.match(JSON.stringify(blocks), /Pipeline Health/);
   assert.match(JSON.stringify(blocks), /Priority Closing Opportunities/);
-  assert.match(JSON.stringify(blocks), /Operational Attention/);
+  assert.match(JSON.stringify(blocks), /Updates Since the Last Report/);
+  assert.match(JSON.stringify(blocks), /Leadership Attention/);
+  assert.match(JSON.stringify(blocks), /Calls and Conversion Snapshot/);
+  assert.match(JSON.stringify(blocks), /Monday Hygiene and Follow-up Exceptions/);
+  assert.match(JSON.stringify(blocks), /Upcoming Sales Meetings/);
   assert.equal(
     blocks.some(
       (block) =>
@@ -261,19 +273,9 @@ test("builds a Lark-native report from headings, text, dividers, and tables", ()
     ),
     true,
   );
-  assert.match(JSON.stringify(blocks), /Basis for this rating/);
   assert.doesNotMatch(JSON.stringify(blocks), /Status:/);
   assert.match(JSON.stringify(blocks), /• Juniper Vale Foods/);
-  assert.equal(
-    blocks.some(
-      (block) =>
-        block.type === "text" &&
-        block.text === "Guide" &&
-        block.bold === true &&
-        block.underline === true,
-    ),
-    true,
-  );
+  assert.doesNotMatch(JSON.stringify(blocks), /All-Time Board Snapshot/);
   assert.doesNotMatch(
     JSON.stringify(blocks),
     /Source: Monday Final Verdict activity log/,
