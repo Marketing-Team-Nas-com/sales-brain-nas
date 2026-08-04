@@ -2,11 +2,13 @@ import { NextResponse } from "next/server";
 import { ensureDailyNewspaperSchedulerStarted } from "../../lib/daily-newspaper-scheduler";
 import { ensureSalesMemorySchedulerStarted } from "../../lib/sales-memory-scheduler";
 import { ensureTwiceWeeklyReportSchedulerStarted } from "../../lib/twice-weekly-report-scheduler";
+import { ensure12HourSalesPulseSchedulerStarted } from "../../lib/sales-pulse-12h-scheduler";
 
 export async function GET() {
   const memoryScheduler = ensureSalesMemorySchedulerStarted();
   const reportScheduler = ensureTwiceWeeklyReportSchedulerStarted();
   const dailyNewspaperScheduler = ensureDailyNewspaperSchedulerStarted();
+  const salesPulse12HourScheduler = ensure12HourSalesPulseSchedulerStarted();
   return NextResponse.json({
     ok: true,
     commit:
@@ -17,5 +19,6 @@ export async function GET() {
     memoryScheduler,
     reportScheduler,
     dailyNewspaperScheduler,
+    salesPulse12HourScheduler,
   });
 }

@@ -1,6 +1,6 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
-import { createTwiceWeeklySalesReport } from "./twice-weekly-report";
+import { createExecutiveSalesPulseReport } from "./executive-sales-pulse-report";
 
 declare global {
   var salesBrainReportScheduler:
@@ -61,7 +61,7 @@ async function maybeSendScheduledReport() {
 
   if (sent === key) return;
 
-  await createTwiceWeeklySalesReport({ sendToChat: true });
+  await createExecutiveSalesPulseReport({ sendToChat: true });
   await setLastSentReportKey(key);
 }
 
@@ -86,8 +86,8 @@ function reportDays() {
 }
 
 function reportHour() {
-  const parsed = Number(process.env.SALES_BRAIN_REPORT_HOUR || "9");
-  return Number.isFinite(parsed) ? Math.max(0, Math.min(23, parsed)) : 9;
+  const parsed = Number(process.env.SALES_BRAIN_REPORT_HOUR || "14");
+  return Number.isFinite(parsed) ? Math.max(0, Math.min(23, parsed)) : 14;
 }
 
 function singaporeNow() {

@@ -57,6 +57,18 @@ test("accepts all supported emoji and written answer variations", () => {
   });
 });
 
+test("accepts the questionnaire wording currently used in Monday", () => {
+  const parsed = parseQuestionnaire([
+    "✅ Am I talking to the key decision maker? Yes",
+    "✅ Is this person / company at least $5 million in revenue? Yes",
+    "✅ Are they spending at least $500,000 in marketing spend? Yes",
+    "✅ Are they interested in continuing to the next stage? Yes",
+    "✅ Do you think it's worth continuing to pursue them? Yes",
+  ]);
+
+  assert.deepEqual(parsed.questionnaire, allTrue);
+});
+
 test("uses null for missing and ambiguous answers", () => {
   const parsed = parseQuestionnaire([
     "Am I talking to the key decision-maker?",

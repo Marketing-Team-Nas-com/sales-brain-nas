@@ -47,11 +47,11 @@ const QUESTIONS: Array<{
   },
   {
     field: "revenueAtLeast5m",
-    pattern: /is\s+the\s+person\s*\/?\s*company\s+at\s+least\s+\$?\s*5\s*m\s+in\s+revenue\s*\??/i,
+    pattern: /is\s+(?:the|this)\s+person\s*\/?\s*company\s+at\s+least\s+\$?\s*5\s*(?:m|million)\s+in\s+revenue\s*\??/i,
   },
   {
     field: "marketingSpendAtLeast500k",
-    pattern: /are\s+they\s+spending\s+at\s+least\s+\$?\s*500\s*k\s+in\s+marketing\s*\??/i,
+    pattern: /are\s+they\s+spending\s+at\s+least\s+\$?\s*500(?:,?000|\s*k)\s+in\s+marketing(?:\s+spend)?\s*\??/i,
   },
   {
     field: "interestedInNextStage",
@@ -59,7 +59,7 @@ const QUESTIONS: Array<{
   },
   {
     field: "worthPursuing",
-    pattern: /does\s+the\s+salesperson\s+think\s+they\s+are\s+worth\s+pursuing\s*\??/i,
+    pattern: /(?:does\s+the\s+salesperson\s+think\s+they\s+are|do\s+you\s+think\s+it(?:'|’)s)\s+worth\s+(?:continuing\s+to\s+)?pursu(?:e|ing)(?:\s+them)?\s*\??/i,
   },
 ];
 
