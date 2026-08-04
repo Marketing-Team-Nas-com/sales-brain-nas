@@ -82,3 +82,98 @@ test("requires current Signed state and flags conflicting activity history", asy
   assert.match(answer, /Confirmed Co/);
   assert.match(answer, /Conflict Co moved to Signed, but currently shows Agreement Stage/);
 });
+
+test("reconciles current fields, questionnaire, notes, activity, and conflicts for a lead", async () => {
+  const contextDeal = deal({
+    id: "context",
+    account: "Context Co",
+    callStage: "Sales Qualified",
+    nextStepsStatus: "",
+    finalVerdict: "Sales Qualified",
+    salesPulseUpdates: [
+      {
+        classification: "structured_questionnaire",
+        updateId: "questionnaire",
+        authorId: "agent-1",
+        authorName: "Sales Agent",
+        timestamp: "2026-08-03T08:00:00.000Z",
+        body: "Questionnaire",
+        googleDocsUrl: "https://docs.google.com/document/d/fixture-doc/edit",
+        googleDocsDocumentId: "fixture-doc",
+        questionnaire: {
+          decisionMaker: true,
+          revenueAtLeast5m: true,
+          marketingSpendAtLeast500k: true,
+          interestedInNextStage: false,
+          worthPursuing: false,
+        },
+        conflicts: [],
+        verdict: "Sales Qualified",
+        notes: "Customer asked for pricing.",
+      },
+      {
+        classification: "salesperson_note",
+        updateId: "note",
+        authorId: "agent-1",
+        authorName: "Sales Agent",
+        timestamp: "2026-08-03T09:00:00.000Z",
+        body: "Do not pursue until the buyer confirms interest.",
+        googleDocsUrl: "",
+        googleDocsDocumentId: "",
+        questionnaire: {
+          decisionMaker: null,
+          revenueAtLeast5m: null,
+          marketingSpendAtLeast500k: null,
+          interestedInNextStage: null,
+          worthPursuing: null,
+        },
+        conflicts: [],
+        verdict: "",
+        notes: "Do not pursue until the buyer confirms interest.",
+      },
+      {
+        classification: "unrelated_or_system_comment",
+        updateId: "system",
+        authorId: "",
+        authorName: "Automation",
+        timestamp: "2026-08-03T10:00:00.000Z",
+        body: "System synced.",
+        googleDocsUrl: "",
+        googleDocsDocumentId: "",
+        questionnaire: {
+          decisionMaker: null,
+          revenueAtLeast5m: null,
+          marketingSpendAtLeast500k: null,
+          interestedInNextStage: null,
+          worthPursuing: null,
+        },
+        conflicts: [],
+        verdict: "",
+        notes: "",
+      },
+    ],
+  });
+  const answer = await answerSalesQuestion({
+    question: "What happened with Context Co?",
+    deals: [contextDeal],
+    activityChanges: [
+      {
+        itemId: "context",
+        itemName: "Context Co",
+        columnTitle: "Final Verdict",
+        previousValue: "In Review",
+        value: "Agreement Stage",
+        createdAt: "2026-08-03T11:00:00.000Z",
+      },
+    ],
+  });
+
+  assert.match(answer, /Current CRM: Call Stage Sales Qualified/);
+  assert.match(answer, /interested in next stage No/);
+  assert.match(answer, /Latest salesperson note/);
+  assert.match(answer, /Final Verdict: In Review → Agreement Stage/);
+  assert.match(answer, /customer intent is No/);
+  assert.match(answer, /salesperson recommendation is No/);
+  assert.match(answer, /document content was not opened/);
+  assert.match(answer, /1 unrelated or system comment was preserved but excluded/);
+});

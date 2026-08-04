@@ -40,6 +40,15 @@ export async function answerSalesQuestion({
   activityChanges,
 }: BrainAnswerInput) {
   const fallback = deterministicSalesAnswer(question, deals);
+  const leadContextAnswer =
+    activityChanges === undefined
+      ? ""
+      : deterministicLeadContextAnswer(
+          question,
+          deals,
+          conversation,
+          activityChanges,
+        );
   const activityAnswer =
     activityChanges === undefined
       ? ""
@@ -50,6 +59,10 @@ export async function answerSalesQuestion({
 
   if (directAnswer) {
     return directAnswer;
+  }
+
+  if (leadContextAnswer) {
+    return leadContextAnswer;
   }
 
   if (activityAnswer) {
@@ -933,8 +946,8 @@ function searchTokens(text: string) {
   ];
 }
 
-function normalizeSearch(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+function normalizeSearch(value: string | undefined | null) {
+  return (value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function summarizeByStage(deals: SalesDeal[]) {
@@ -1742,7 +1755,7 @@ function isHappenedCall(deal: SalesDeal) {
 export function salesActivityWindowForQuestion(question: string) {
   const normalized = normalizeQuestionForIntent(question);
   if (
-    !/\b(call|calls|meeting|meetings|sign|signed|agreement stage|confirmed|verbal|2nd call|second call|lost|gone cold)\b/.test(
+    !/\b(call|calls|meeting|meetings|sign|signed|agreement stage|confirmed|verbal|2nd call|second call|lost|gone cold|happened|notes?|comments?|recommend|interested|changed|timeline|why)\b/.test(
       normalized,
     )
   ) {
@@ -1761,12 +1774,141 @@ export function salesActivityWindowForQuestion(question: string) {
             endDate: todayInSingapore(),
           }
         : null);
-  if (!range) return null;
+  const resolvedRange =
+    range ||
+    (/\b(happened|notes?|comments?|recommend|interested|changed|timeline|why)\b/.test(
+      normalized,
+    )
+      ? {
+          startDate: daysAgoInSingapore(89),
+          endDate: todayInSingapore(),
+        }
+      : null);
+  if (!resolvedRange) return null;
   return {
-    ...range,
-    from: `${range.startDate}T00:00:00+08:00`,
-    to: `${range.endDate}T23:59:59+08:00`,
+    ...resolvedRange,
+    from: `${resolvedRange.startDate}T00:00:00+08:00`,
+    to: `${resolvedRange.endDate}T23:59:59+08:00`,
   };
+}
+
+function deterministicLeadContextAnswer(
+  question: string,
+  deals: SalesDeal[],
+  conversation: ConversationMessage[],
+  activityChanges: MondayBoardActivityChange[],
+) {
+  const normalized = normalizeQuestionForIntent(question);
+  if (
+    !/\b(what happened|notes?|comments?|recommend|interested|changed|timeline|why|current status|latest update)\b/.test(
+      normalized,
+    )
+  ) {
+    return "";
+  }
+  const relevant = findRelevantDeals(deals, question, conversation);
+  if (!relevant.length) return "";
+  const deal = relevant[0];
+  const duplicateMatches = relevant.filter(
+    (candidate) =>
+      normalizeSearch(candidate.account) === normalizeSearch(deal.account),
+  );
+  if (duplicateMatches.length > 1) {
+    return [
+      `I found ${duplicateMatches.length} Monday records for ${deal.account}. Please specify the contact or email:`,
+      ...duplicateMatches.map(
+        (candidate) =>
+          `- ${candidate.account}${candidate.email ? ` (${candidate.email})` : ""}`,
+      ),
+    ].join("\n");
+  }
+
+  const parsed = [...(deal.salesPulseUpdates || [])].sort(
+    (left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp),
+  );
+  const questionnaire = parsed.find(
+    (update) => update.classification === "structured_questionnaire",
+  );
+  const salespersonNote = parsed.find(
+    (update) => update.classification === "salesperson_note",
+  );
+  const unrelatedCount = parsed.filter(
+    (update) => update.classification === "unrelated_or_system_comment",
+  ).length;
+  const timeline = activityChanges
+    .filter((change) => change.itemId === deal.id)
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    .slice(0, 5);
+  const conflicts: string[] = [];
+  if (
+    deal.callStage === "Sales Qualified" &&
+    questionnaire?.questionnaire.interestedInNextStage === false
+  ) {
+    conflicts.push("Current Call Stage is Sales Qualified, but customer intent is No.");
+  }
+  if (
+    deal.callStage === "Sales Qualified" &&
+    questionnaire?.questionnaire.worthPursuing === false
+  ) {
+    conflicts.push("Current Call Stage is Sales Qualified, but the salesperson recommendation is No.");
+  }
+  const latestVerdictChange = timeline.find((change) =>
+    /^Final Verdict$/i.test(change.columnTitle),
+  );
+  if (
+    latestVerdictChange &&
+    latestVerdictChange.value &&
+    latestVerdictChange.value !== deal.finalVerdict
+  ) {
+    conflicts.push(
+      `Latest visible Final Verdict activity is ${latestVerdictChange.value}, while the current field is ${deal.finalVerdict || "Unknown"}.`,
+    );
+  }
+
+  return [
+    deal.account,
+    `Current CRM: Call Stage ${usableField(deal.callStage) ? deal.callStage : "Unknown"}; Next Steps ${usableField(deal.nextStepsStatus) ? deal.nextStepsStatus : "Unknown"}; Final Verdict ${usableField(deal.finalVerdict) ? deal.finalVerdict : "Unknown"}.`,
+    questionnaire
+      ? `Latest questionnaire (${friendlyTimestamp(questionnaire.timestamp)}, ${questionnaire.authorName || "author unknown"}): decision-maker ${yesNoUnknown(questionnaire.questionnaire.decisionMaker)}; revenue at least $5M ${yesNoUnknown(questionnaire.questionnaire.revenueAtLeast5m)}; marketing spend at least $500K ${yesNoUnknown(questionnaire.questionnaire.marketingSpendAtLeast500k)}; interested in next stage ${yesNoUnknown(questionnaire.questionnaire.interestedInNextStage)}; worth pursuing ${yesNoUnknown(questionnaire.questionnaire.worthPursuing)}; verdict ${questionnaire.verdict || "Unknown"}.`
+      : "Latest questionnaire: none in the 10 preserved Monday updates.",
+    salespersonNote
+      ? `Latest salesperson note (${friendlyTimestamp(salespersonNote.timestamp)}, ${salespersonNote.authorName || "author unknown"}): ${compactEvidence(salespersonNote.notes || salespersonNote.body)}`
+      : "Latest salesperson note: none in the 10 preserved Monday updates.",
+    timeline.length
+      ? `Recent activity: ${timeline
+          .map(
+            (change) =>
+              `${friendlyTimestamp(change.createdAt)} - ${change.columnTitle}: ${change.previousValue || "blank"} → ${change.value || "blank"}`,
+          )
+          .join("; ")}.`
+      : "Recent activity: no matching activity in the retrieved 90-day window.",
+    conflicts.length ? `Conflicts to review: ${conflicts.join(" ")}` : "",
+    questionnaire?.googleDocsUrl || salespersonNote?.googleDocsUrl
+      ? `Meeting document: ${questionnaire?.googleDocsUrl || salespersonNote?.googleDocsUrl} (link preserved; document content was not opened).`
+      : "Meeting document: none preserved in the relevant updates.",
+    unrelatedCount
+      ? `${unrelatedCount} unrelated or system ${unrelatedCount === 1 ? "comment was" : "comments were"} preserved but excluded from the sales summary.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function yesNoUnknown(value: boolean | null) {
+  return value === true ? "Yes" : value === false ? "No" : "Unknown";
+}
+
+function compactEvidence(value: string) {
+  const text = value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return text.length > 320 ? `${text.slice(0, 317)}...` : text;
+}
+
+function friendlyTimestamp(value: string) {
+  return `${new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value))} SGT`;
 }
 
 function deterministicActivityAnswer(
