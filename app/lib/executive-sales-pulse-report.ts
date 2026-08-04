@@ -15,7 +15,7 @@ import {
 
 export const DEFAULT_REPORT_EDITORS = [
   "roge@nas.io",
-  "alex@nas.io",
+  "alex@nasdaily.com",
   "lesha@nasdaily.com",
 ];
 
