@@ -37,14 +37,13 @@ export async function answerSalesQuestion({
   deals,
   conversation = [],
   contextNotes = [],
-  activityChanges = [],
+  activityChanges,
 }: BrainAnswerInput) {
   const fallback = deterministicSalesAnswer(question, deals);
-  const activityAnswer = deterministicActivityAnswer(
-    question,
-    deals,
-    activityChanges,
-  );
+  const activityAnswer =
+    activityChanges === undefined
+      ? ""
+      : deterministicActivityAnswer(question, deals, activityChanges);
   const directAnswer = directSpecificLeadAnswer({ question, deals, conversation });
   const cmoDinnerAnswer = directCmoDinnerAnswer(question, deals);
   const normalized = normalizeQuestionForIntent(question);
@@ -1743,7 +1742,7 @@ function isHappenedCall(deal: SalesDeal) {
 export function salesActivityWindowForQuestion(question: string) {
   const normalized = normalizeQuestionForIntent(question);
   if (
-    !/\b(sign|signed|agreement stage|confirmed|verbal|2nd call|second call|lost|gone cold)\b/.test(
+    !/\b(call|calls|meeting|meetings|sign|signed|agreement stage|confirmed|verbal|2nd call|second call|lost|gone cold)\b/.test(
       normalized,
     )
   ) {
@@ -1778,6 +1777,9 @@ function deterministicActivityAnswer(
   const window = salesActivityWindowForQuestion(question);
   if (!window) return "";
   const normalized = normalizeQuestionForIntent(question);
+  if (/\b(call|calls|meeting|meetings)\b/.test(normalized)) {
+    return deterministicCallActivityAnswer(window, activityChanges);
+  }
   const target =
     /\bsign(?:ed)?\b/.test(normalized)
       ? "Signed"
@@ -1837,6 +1839,51 @@ function deterministicActivityAnswer(
     );
   }
   return lines.join(" ");
+}
+
+function deterministicCallActivityAnswer(
+  window: NonNullable<ReturnType<typeof salesActivityWindowForQuestion>>,
+  activityChanges: MondayBoardActivityChange[],
+) {
+  const counts = {
+    "New Meeting": 0,
+    Completed: 0,
+    Rescheduled: 0,
+    "No-show": 0,
+    Cancelled: 0,
+  };
+  for (const change of activityChanges) {
+    if (
+      !/^Call Stage$/i.test(change.columnTitle) ||
+      sgtDate(change.createdAt) < window.startDate ||
+      sgtDate(change.createdAt) > window.endDate
+    ) {
+      continue;
+    }
+    if (/^(Sales Qualified|Not Qualified|In Review)$/i.test(change.value)) {
+      counts.Completed += 1;
+    } else if (/^Booked a Meeting$/i.test(change.value) && !change.previousValue) {
+      counts["New Meeting"] += 1;
+    } else if (/^Rescheduled$/i.test(change.value)) {
+      counts.Rescheduled += 1;
+    } else if (/^No[\s-]?Show$/i.test(change.value)) {
+      counts["No-show"] += 1;
+    } else if (/^Cancelled$/i.test(change.value)) {
+      counts.Cancelled += 1;
+    }
+  }
+  const period =
+    window.startDate === window.endDate
+      ? friendlyDate(window.startDate)
+      : `${friendlyDate(window.startDate)} to ${friendlyDate(window.endDate)}`;
+  return [
+    `From ${period}:`,
+    `- New Meeting: ${counts["New Meeting"]}`,
+    `- Completed: ${counts.Completed}`,
+    `- Rescheduled: ${counts.Rescheduled}`,
+    `- No-show: ${counts["No-show"]}`,
+    `- Cancelled: ${counts.Cancelled}`,
+  ].join("\n");
 }
 
 function sgtDate(value: string) {
