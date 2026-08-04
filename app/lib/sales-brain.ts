@@ -1,4 +1,4 @@
-import type { SalesDeal } from "./monday";
+import type { MondayBoardActivityChange, SalesDeal } from "./monday";
 import type { ConversationMessage, SalesContextNote } from "./sales-memory";
 
 type BrainAnswerInput = {
@@ -6,6 +6,7 @@ type BrainAnswerInput = {
   deals: SalesDeal[];
   conversation?: ConversationMessage[];
   contextNotes?: SalesContextNote[];
+  activityChanges?: MondayBoardActivityChange[];
 };
 
 type StageSummary = {
@@ -36,14 +37,24 @@ export async function answerSalesQuestion({
   deals,
   conversation = [],
   contextNotes = [],
+  activityChanges = [],
 }: BrainAnswerInput) {
   const fallback = deterministicSalesAnswer(question, deals);
+  const activityAnswer = deterministicActivityAnswer(
+    question,
+    deals,
+    activityChanges,
+  );
   const directAnswer = directSpecificLeadAnswer({ question, deals, conversation });
   const cmoDinnerAnswer = directCmoDinnerAnswer(question, deals);
   const normalized = normalizeQuestionForIntent(question);
 
   if (directAnswer) {
     return directAnswer;
+  }
+
+  if (activityAnswer) {
+    return activityAnswer;
   }
 
   if (cmoDinnerAnswer) {
@@ -1544,12 +1555,12 @@ function formatDateRangeCallReport(
   const lines = [
     `From ${friendlyDate(startDate)} to ${friendlyDate(endDate)}:`,
     `- ${rangeCalls.length} calls were scheduled.`,
-    `- ${happenedCalls.length} likely happened.`,
-    `- ${fitHappenedCalls.length} of the calls that happened were Fit leads.`,
+    `- ${happenedCalls.length} were completed, based only on Call Stage being Sales Qualified, Not Qualified, or In Review.`,
+    `- ${fitHappenedCalls.length} of the completed calls were Fit leads.`,
     `- ${noShowCalls.length} were no-shows.`,
     `- ${cancelledCalls.length} were cancelled.`,
     `- ${rescheduledCalls.length} were rescheduled.`,
-    `- ${millionPlusHappenedCalls.length} of the calls that happened were $1M+ leads.`,
+    `- ${millionPlusHappenedCalls.length} of the completed calls were $1M+ leads.`,
   ];
 
   if (wantsCallStatusList) {
@@ -1724,7 +1735,117 @@ function salesCrmDeals(deals: SalesDeal[]) {
 }
 
 function isHappenedCall(deal: SalesDeal) {
-  return !isNoShowDeal(deal) && !isCancelledDeal(deal) && !isRescheduledDeal(deal);
+  return ["Sales Qualified", "Not Qualified", "In Review"].includes(
+    deal.callStage,
+  );
+}
+
+export function salesActivityWindowForQuestion(question: string) {
+  const normalized = normalizeQuestionForIntent(question);
+  if (
+    !/\b(sign|signed|agreement stage|confirmed|verbal|2nd call|second call|lost|gone cold)\b/.test(
+      normalized,
+    )
+  ) {
+    return null;
+  }
+  const range =
+    requestedDateRange(normalized) ||
+    (/\byesterday\b/.test(normalized)
+      ? {
+          startDate: daysAgoInSingapore(1),
+          endDate: daysAgoInSingapore(1),
+        }
+      : /\btoday\b/.test(normalized)
+        ? {
+            startDate: todayInSingapore(),
+            endDate: todayInSingapore(),
+          }
+        : null);
+  if (!range) return null;
+  return {
+    ...range,
+    from: `${range.startDate}T00:00:00+08:00`,
+    to: `${range.endDate}T23:59:59+08:00`,
+  };
+}
+
+function deterministicActivityAnswer(
+  question: string,
+  deals: SalesDeal[],
+  activityChanges: MondayBoardActivityChange[],
+) {
+  const window = salesActivityWindowForQuestion(question);
+  if (!window) return "";
+  const normalized = normalizeQuestionForIntent(question);
+  const target =
+    /\bsign(?:ed)?\b/.test(normalized)
+      ? "Signed"
+      : /\bagreement stage\b/.test(normalized)
+        ? "Agreement Stage"
+        : /\bconfirmed|verbal\b/.test(normalized)
+          ? "Confirmed (Verbal)"
+          : /\b(?:2nd|second) call\b/.test(normalized)
+            ? "2nd call with Nuseir"
+            : /\bgone cold\b/.test(normalized)
+              ? "Gone Cold"
+              : /\blost\b/.test(normalized)
+                ? "Lost"
+                : "";
+  if (!target) return "";
+  const changes = activityChanges.filter(
+    (change) =>
+      /^Final Verdict$/i.test(change.columnTitle) &&
+      change.value.toLowerCase() === target.toLowerCase() &&
+      sgtDate(change.createdAt) >= window.startDate &&
+      sgtDate(change.createdAt) <= window.endDate,
+  );
+  const latestByItem = new Map<string, MondayBoardActivityChange>();
+  for (const change of changes) {
+    const current = latestByItem.get(change.itemId);
+    if (!current || Date.parse(change.createdAt) > Date.parse(current.createdAt)) {
+      latestByItem.set(change.itemId, change);
+    }
+  }
+  const dealById = new Map(deals.map((deal) => [deal.id, deal]));
+  const moved = [...latestByItem.values()];
+  const confirmed = moved.filter(
+    (change) =>
+      dealById.get(change.itemId)?.finalVerdict.toLowerCase() ===
+      target.toLowerCase(),
+  );
+  const conflicts = moved.filter(
+    (change) =>
+      dealById.get(change.itemId)?.finalVerdict.toLowerCase() !==
+      target.toLowerCase(),
+  );
+  const period =
+    window.startDate === window.endDate
+      ? friendlyDate(window.startDate)
+      : `${friendlyDate(window.startDate)} to ${friendlyDate(window.endDate)}`;
+  const lines = [
+    `${confirmed.length} ${confirmed.length === 1 ? "lead is" : "leads are"} confirmed as ${target} for ${period}${confirmed.length ? `: ${confirmed.map((change) => change.itemName || dealById.get(change.itemId)?.account || change.itemId).join(", ")}.` : ""}`,
+  ];
+  if (conflicts.length) {
+    lines.push(
+      `${conflicts.length} activity-log ${conflicts.length === 1 ? "conflict needs" : "conflicts need"} review: ${conflicts
+        .map((change) => {
+          const deal = dealById.get(change.itemId);
+          return `${change.itemName || deal?.account || change.itemId} moved to ${target}, but currently shows ${deal?.finalVerdict || "Unknown"}`;
+        })
+        .join("; ")}.`,
+    );
+  }
+  return lines.join(" ");
+}
+
+function sgtDate(value: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
 }
 
 function leadAddedDate(deal: SalesDeal) {

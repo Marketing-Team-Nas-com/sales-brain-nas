@@ -3,11 +3,15 @@ import {
   changeDealColumns,
   createDealUpdate,
   getBoardColumnIdByTitle,
+  getBoardActivityChanges,
   getBoardSnapshot,
   type SalesDeal,
 } from "../../../lib/monday";
 import { replyToLarkMessage, sendLarkTextReport } from "../../../lib/lark";
-import { answerSalesQuestion } from "../../../lib/sales-brain";
+import {
+  answerSalesQuestion,
+  salesActivityWindowForQuestion,
+} from "../../../lib/sales-brain";
 import {
   appendConversationMemory,
   appendSalesContextNote,
@@ -216,6 +220,14 @@ async function handleSalesAnswerInBackground({
 }) {
   try {
     const boardData = await loadSalesBoardDeals(question);
+    const activityWindow = salesActivityWindowForQuestion(question);
+    const activityChanges = activityWindow
+      ? await getBoardActivityChanges({
+          boardId: boardData.boardId,
+          from: activityWindow.from,
+          to: activityWindow.to,
+        })
+      : [];
     const contextNotes = await getSalesContextNotes();
     const answer =
       (await maybeHandleMondayWrite({
@@ -238,6 +250,7 @@ async function handleSalesAnswerInBackground({
         deals: boardData.deals,
         conversation,
         contextNotes,
+        activityChanges,
       }));
 
     await sendLarkAnswer({ message, messageId, answer });
