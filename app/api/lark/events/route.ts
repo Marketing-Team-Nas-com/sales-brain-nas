@@ -812,7 +812,7 @@ function liveBoardIdsForQuestion(question: string, boardIds: string[]) {
 }
 
 function asksAboutCmoDinnerBoard(question: string) {
-  return /\b(cmo board|cmo dinner|dinner leads?|miami dinner|singapore dinner|tel aviv|israel dinner)\b/i.test(
+  return /\b(cmo board|cmo dinner|dinner leads?|after dinner|miami dinner|singapore dinner|tel aviv|israel dinner)\b/i.test(
     question,
   );
 }
@@ -928,6 +928,48 @@ async function maybeHandleMondayWrite({
     await setPendingMondayActionForIds(actionThreadIds, resolvedDisambiguation);
     const email = resolvedDisambiguation.email ? ` (${resolvedDisambiguation.email})` : "";
     return `Got it - I selected ${resolvedDisambiguation.account}${email}. Reply yes to confirm, and I'll ${confirmationTextForAction(resolvedDisambiguation)}.`;
+  }
+
+  const bulkCmoAfterDinnerStatusIntent = bulkCmoAfterDinnerStatusUpdateIntent(question, deals);
+
+  if (bulkCmoAfterDinnerStatusIntent) {
+    const { label, matchedDeals, missingEmails } = bulkCmoAfterDinnerStatusIntent;
+
+    if (missingEmails.length) {
+      await clearPendingMondayActionForIds(actionThreadIds);
+      const preview = missingEmails.slice(0, 8).join(", ");
+      const suffix = missingEmails.length > 8 ? ` and ${missingEmails.length - 8} more` : "";
+      return `I found ${matchedDeals.length} CMO Dinner records, but I could not match ${missingEmails.length} email${missingEmails.length === 1 ? "" : "s"}: ${preview}${suffix}.`;
+    }
+
+    const action = {
+      id: `${Date.now()}-bulk-cmo-after-dinner-status`,
+      createdAt: new Date().toISOString(),
+      boardId: CMO_DINNER_BOARD_ID,
+      itemId: "",
+      account: `${matchedDeals.length} CMO Dinner records`,
+      email: "",
+      description: `set CMO Dinner After Dinner Status to ${label} on ${matchedDeals.length} records`,
+      bulkActions: matchedDeals.map((deal) => ({
+        boardId: deal.boardId || CMO_DINNER_BOARD_ID,
+        itemId: deal.id,
+        account: deal.account,
+        email: deal.email,
+        description: `set After Dinner Status to ${label}`,
+        columnValues: {
+          [CMO_DINNER_AFTER_DINNER_STATUS_COLUMN_ID]: { label },
+        },
+        createUpdate: false,
+      })),
+    } satisfies PendingMondayAction;
+
+    if (hasApprovalLanguage(question)) {
+      return executePendingMondayAction({ threadIds: actionThreadIds, action });
+    }
+
+    await setPendingMondayActionForIds(actionThreadIds, action);
+
+    return `Got it - I found all ${matchedDeals.length} CMO Dinner records. Reply yes to confirm, and I'll set After Dinner Status to ${label} for all of them.`;
   }
 
   const bulkFollowUpNoteIntent = bulkFollowUpThreadNoteIntent(question, deals);
@@ -1687,6 +1729,84 @@ function mondayThreadNoteIntent(question: string) {
   if (!note) return null;
 
   return { note };
+}
+
+function bulkCmoAfterDinnerStatusUpdateIntent(question: string, deals: SalesDeal[]) {
+  const emails = extractEmailAddresses(question);
+  if (!emails.length) return null;
+
+  const normalized = question.toLowerCase();
+  const mentionsAfterDinner =
+    asksAboutCmoDinnerBoard(question) ||
+    /\bafter\s+dinner(?:\s+status)?\b/.test(normalized);
+  const mentionsStatusColumn =
+    /\bafter\s+dinner(?:\s+status)?\b/.test(normalized) ||
+    /\bcolumn\b.{0,50}\b(?:after\s+dinner|status)\b/.test(normalized);
+  const label = afterDinnerStatusLabelFromQuestion(question);
+
+  if (!mentionsAfterDinner || !mentionsStatusColumn || !label) return null;
+
+  const dealsByEmail = new Map<string, SalesDeal[]>();
+  for (const deal of deals.filter(isCmoDinnerDeal)) {
+    const email = normalizeEmail(deal.email || "");
+    if (!email) continue;
+    const existing = dealsByEmail.get(email) || [];
+    existing.push(deal);
+    dealsByEmail.set(email, existing);
+  }
+
+  const matchedDeals: SalesDeal[] = [];
+  const missingEmails: string[] = [];
+  const seenIds = new Set<string>();
+
+  for (const email of emails) {
+    const matches = dealsByEmail.get(email);
+    if (!matches?.length) {
+      missingEmails.push(email);
+      continue;
+    }
+
+    for (const deal of matches) {
+      if (seenIds.has(deal.id)) continue;
+      matchedDeals.push(deal);
+      seenIds.add(deal.id);
+    }
+  }
+
+  return {
+    label,
+    matchedDeals,
+    missingEmails,
+  };
+}
+
+function extractEmailAddresses(text: string) {
+  return Array.from(text.matchAll(/\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b/g))
+    .map((match) => normalizeEmail(match[0]))
+    .filter(Boolean);
+}
+
+function normalizeEmail(email: string) {
+  return email.trim().toLowerCase();
+}
+
+function afterDinnerStatusLabelFromQuestion(question: string) {
+  const normalized = question.toLowerCase();
+
+  if (/\bemail\s+sent\b|\bemailed\b|\bsent\s+(?:an?\s+)?email\b/.test(normalized)) {
+    return "Email sent";
+  }
+  if (/\bwhats\s*app(?:ed)?\b|\bwhatsapped\b/.test(normalized)) {
+    return "WhatsApped";
+  }
+  if (/\bmeeting\s+booked\b/.test(normalized)) {
+    return "Meeting Booked";
+  }
+  if (/\bno\s+action\b/.test(normalized)) {
+    return "No Action";
+  }
+
+  return "";
 }
 
 function bulkFollowUpThreadNoteIntent(question: string, deals: SalesDeal[]) {
