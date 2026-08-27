@@ -1,0 +1,21 @@
+name: First Call Scoring
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "15 * * * *"
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Trigger the secured scorer
+        env:
+          SCORING_URL: ${{ secrets.FIRST_CALL_SCORING_URL }}
+          CRON_SECRET: ${{ secrets.FIRST_CALL_SCORING_CRON_SECRET }}
+        run: |
+          test -n "$SCORING_URL"
+          test -n "$CRON_SECRET"
+          curl --fail-with-body --silent --show-error \
+            --request POST "$SCORING_URL/api/first-call-scoring/run" \
+            --header "Authorization: Bearer $CRON_SECRET"

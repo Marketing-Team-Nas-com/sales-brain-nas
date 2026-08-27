@@ -12,7 +12,8 @@
     "test": "npm run build && node --test tests/*.test.mjs",
     "preview:executive-sales-pulse": "node scripts/generate-executive-sales-pulse-preview.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
-    "db:generate": "drizzle-kit generate"
+    "db:generate": "drizzle-kit generate",
+    "first-call-scoring:run": "node scripts/run-first-call-scoring.ts"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
