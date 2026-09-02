@@ -14,21 +14,22 @@ const daily = {
 };
 
 const rolling = {
-  period: "Aug 26-Sep 1, 2026",
-  spend: 8954,
-  totalLeads: 140,
-  agentFitLeads: 25,
-  agentFitCpa: 358,
-  callActivity: 34,
-  callCpa: 263,
-  salesQualified: 11,
-  inReview: 3,
-  noShows: 14,
+  period: "Aug 27-Sep 2, 2026",
+  spend: 9008,
+  totalLeads: 130,
+  agentFitLeads: 23,
+  agentFitCpa: 392,
+  callActivity: 39,
+  callCpa: 231,
+  salesQualified: 10,
+  inReview: 2,
+  noShows: 11,
   notQualified: 2,
-  rescheduled: 3,
+  rescheduled: 2,
+  cancelled: 2,
   pending: 10,
-  projectedSqls: 15,
-  projectedQualifiedCpa: 597,
+  projectedSqls: 14,
+  projectedQualifiedCpa: 644,
   conversionRate: 37,
 };
 
@@ -74,7 +75,7 @@ export default function Home() {
             <p className="border-l-4 border-[#171717] pl-4 text-lg leading-8 text-[#352f27]">
               Daily quality is not yet visible because qualified outcomes lag. The right CEO
               read is to watch Agent-Fit CPA and call CPA today, then judge qualified CPA on
-              the rolling week.
+              the rolling week. Today is down on volume and up on CPA versus yesterday.
             </p>
           </div>
         </div>
@@ -93,12 +94,12 @@ export default function Home() {
           </p>
 
           <div className="mt-6 grid grid-cols-2 gap-px bg-[#171717]">
-            <Stat label="Spend" value={money(daily.spend)} />
-            <Stat label="Total leads" value={`${daily.totalLeads}`} />
-            <Stat label="Agent-Fit leads" value={`${daily.agentFitLeads}`} />
-            <Stat label="CPA per Agent-Fit" value={money(daily.agentFitCpa)} />
-            <Stat label="Call activity" value={`${daily.callActivity}`} />
-            <Stat label="CPA per call" value={money(daily.callCpa)} />
+            <Stat label="Spend" value={money(daily.spend)} delta="Down 10% vs yesterday" tone="good" />
+            <Stat label="Total leads" value={`${daily.totalLeads}`} delta="Down 21%" tone="bad" />
+            <Stat label="Agent-Fit leads" value={`${daily.agentFitLeads}`} delta="Down 40%" tone="bad" />
+            <Stat label="CPA per Agent-Fit" value={money(daily.agentFitCpa)} delta="Up 50%" tone="bad" />
+            <Stat label="Call activity" value={`${daily.callActivity}`} delta="Down 38%" tone="bad" />
+            <Stat label="CPA per call" value={money(daily.callCpa)} delta="Up 44%" tone="bad" />
           </div>
 
           <div className="mt-6 border-t border-[#171717] pt-5">
@@ -116,7 +117,8 @@ export default function Home() {
               One-line read
             </p>
             <p className="mt-2 text-xl leading-8">
-              Booked-call volume is okay, Agent-Fit CPA is high, and tomorrow&apos;s outcomes
+              Today is weaker than yesterday: less volume, fewer Agent-Fit leads, and higher
+              CPAs. Tomorrow&apos;s outcomes
               will tell us whether this is timing lag or quality dropping.
             </p>
           </div>
@@ -136,10 +138,10 @@ export default function Home() {
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-px bg-[#171717] md:grid-cols-4">
-            <Stat label="Spend" value={money(rolling.spend)} />
-            <Stat label="Agent-Fit leads" value={`${rolling.agentFitLeads}`} />
-            <Stat label="Agent-Fit CPA" value={money(rolling.agentFitCpa)} />
-            <Stat label="Projected SQL CPA" value={`~${money(600)}`} strong />
+            <Stat label="Spend" value={money(rolling.spend)} delta="Up 56% vs prior 7 days" tone="neutral" />
+            <Stat label="Agent-Fit leads" value={`${rolling.agentFitLeads}`} delta="Up 44%" tone="good" />
+            <Stat label="Agent-Fit CPA" value={money(rolling.agentFitCpa)} delta="Up 9%" tone="bad" />
+            <Stat label="Projected SQL CPA" value={`~${money(644)}`} delta="Down 11%" tone="good" />
           </div>
 
           <div className="mt-6 grid gap-6 md:grid-cols-[1fr_0.9fr]">
@@ -155,6 +157,7 @@ export default function Home() {
                 <Line label="No-shows" value={rolling.noShows} />
                 <Line label="Not Qualified" value={rolling.notQualified} />
                 <Line label="Rescheduled" value={rolling.rescheduled} />
+                <Line label="Cancelled" value={rolling.cancelled} />
                 <Line label="Pending calls" value={rolling.pending} />
               </div>
             </div>
@@ -180,7 +183,8 @@ export default function Home() {
                   ~{money(rolling.projectedQualifiedCpa)}
                 </p>
                 <p className="mt-2 text-base leading-7">
-                  Cost per projected qualified lead, rounded to ~{money(600)}.
+                  Cost per projected qualified lead, improved from ~{money(720)} in the prior
+                  7-day period.
                 </p>
               </div>
             </div>
@@ -189,10 +193,10 @@ export default function Home() {
           <div className="mt-7 border-t-2 border-[#171717] pt-5">
             <h3 className="font-serif text-2xl font-semibold">CEO Takeaway</h3>
             <p className="mt-3 text-lg leading-8">
-              This is a productive but slightly expensive week. The projected qualified
-              CPA is around <b>{money(600)}</b>, which is workable for B2B, but the no-show
-              leak is still too high. Keep spend steady, fix show rate, and let the
-              pending calls resolve before scaling harder.
+              The rolling week is stronger than the prior week on volume and projected
+              qualified CPA. Spend is up, but Agent-Fit volume is up too, and projected SQL
+              CPA improved from about <b>{money(720)}</b> to <b>{money(644)}</b>. Keep spend
+              steady, fix show rate, and let the pending calls resolve before scaling harder.
             </p>
           </div>
         </article>
@@ -201,11 +205,28 @@ export default function Home() {
   );
 }
 
-function Stat({ label, value }: { label: string; value: string; strong?: boolean }) {
+function Stat({
+  label,
+  value,
+  delta,
+  tone = "neutral",
+}: {
+  label: string;
+  value: string;
+  delta?: string;
+  tone?: "good" | "bad" | "neutral";
+}) {
+  const toneClass = {
+    good: "text-[#23633d]",
+    bad: "text-[#9a2f2f]",
+    neutral: "text-[#6b6254]",
+  }[tone];
+
   return (
     <div className="bg-[#fbf8f0] p-4">
       <p className="font-serif text-xs uppercase tracking-[0.18em] text-[#6b6254]">{label}</p>
       <p className="mt-2 font-serif text-3xl font-semibold">{value}</p>
+      {delta ? <p className={`mt-2 text-sm font-medium ${toneClass}`}>{delta}</p> : null}
     </div>
   );
 }
