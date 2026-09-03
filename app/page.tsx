@@ -1,37 +1,7 @@
-const daily = {
-  spend: 2628,
-  totalLeads: 45,
-  agentFitLeads: 6,
-  agentFitCpa: 438,
-  callActivity: 10,
-  callCpa: 263,
-  salesQualified: 0,
-  inReview: 0,
-  bookedMeetings: 7,
-  noShows: 2,
-  cancelled: 1,
-  blanks: 35,
-};
+import { getMarketingScorecard, type ScorecardRange } from "./lib/marketing-scorecard";
 
-const rolling = {
-  period: "Aug 27-Sep 2, 2026",
-  spend: 9008,
-  totalLeads: 130,
-  agentFitLeads: 23,
-  agentFitCpa: 392,
-  callActivity: 39,
-  callCpa: 231,
-  salesQualified: 10,
-  inReview: 2,
-  noShows: 11,
-  notQualified: 2,
-  rescheduled: 2,
-  cancelled: 2,
-  pending: 10,
-  projectedSqls: 14,
-  projectedQualifiedCpa: 644,
-  conversionRate: 37,
-};
+export const dynamic = "force-dynamic";
+export const revalidate = 0;
 
 const currency = new Intl.NumberFormat("en-US", {
   style: "currency",
@@ -39,11 +9,34 @@ const currency = new Intl.NumberFormat("en-US", {
   maximumFractionDigits: 0,
 });
 
-function money(value: number) {
-  return currency.format(value);
+function money(value: number | null) {
+  return Number.isFinite(value) ? currency.format(value as number) : "N/A";
 }
 
-export default function Home() {
+function whole(value: number | null) {
+  return Number.isFinite(value) ? Math.round(value as number).toLocaleString("en-US") : "N/A";
+}
+
+function percent(value: number | null) {
+  return Number.isFinite(value) ? `${Math.round((value as number) * 100)}%` : "N/A";
+}
+
+export default async function Home() {
+  try {
+    const scorecard = await getMarketingScorecard();
+    return <ScorecardPage scorecard={scorecard} />;
+  } catch (error) {
+    return <UnavailablePage message={error instanceof Error ? error.message : "Live data unavailable."} />;
+  }
+}
+
+function ScorecardPage({
+  scorecard,
+}: {
+  scorecard: Awaited<ReturnType<typeof getMarketingScorecard>>;
+}) {
+  const { today, daily, previousDaily, rolling, previousRolling } = scorecard;
+
   return (
     <main className="min-h-screen bg-[#f4f0e8] text-[#171717]">
       <section className="border-b-4 border-[#171717] bg-[#fbf8f0] px-5 py-5">
@@ -59,7 +52,7 @@ export default function Home() {
             </div>
             <div className="font-serif text-sm uppercase tracking-[0.18em] text-[#3f392f] md:text-right">
               <p>Daily CEO Edition</p>
-              <p>Sep 2, 2026 SGT</p>
+              <p>{formatDisplayDate(today)} SGT</p>
             </div>
           </div>
 
@@ -69,13 +62,11 @@ export default function Home() {
                 Front Page Read
               </p>
               <h2 className="mt-3 max-w-4xl font-serif text-4xl font-semibold leading-tight md:text-6xl">
-                The machine is booking calls, but today is still a watch day.
+                {frontPageHeadline(daily, rolling)}
               </h2>
             </div>
             <p className="border-l-4 border-[#171717] pl-4 text-lg leading-8 text-[#352f27]">
-              Daily quality is not yet visible because qualified outcomes lag. The right CEO
-              read is to watch Agent-Fit CPA and call CPA today, then judge qualified CPA on
-              the rolling week. Today is down on volume and up on CPA versus yesterday.
+              {frontPageRead(daily, previousDaily, rolling, previousRolling)}
             </p>
           </div>
         </div>
@@ -88,23 +79,55 @@ export default function Home() {
           </p>
           <h2 className="mt-2 font-serif text-4xl font-semibold">Daily CEO Read</h2>
           <p className="mt-4 text-lg leading-8">
-            Today is decent on booking motion, but expensive on Agent-Fit. The funnel has
-            not had enough time to show qualified outcomes, so qualified CPA is not
-            meaningful yet.
+            This is the live read from the dashboard and sheet. Qualified outcomes can lag
+            the day&apos;s lead flow, so the daily view is best for CPA movement and call
+            activity, while qualified CPA should be judged on the rolling week.
           </p>
 
           <div className="mt-6 grid grid-cols-2 gap-px bg-[#171717]">
-            <Stat label="Spend" value={money(daily.spend)} delta="Down 10% vs yesterday" tone="good" />
-            <Stat label="Total leads" value={`${daily.totalLeads}`} delta="Down 21%" tone="bad" />
-            <Stat label="Agent-Fit leads" value={`${daily.agentFitLeads}`} delta="Down 40%" tone="bad" />
-            <Stat label="CPA per Agent-Fit" value={money(daily.agentFitCpa)} delta="Up 50%" tone="bad" />
-            <Stat label="Call activity" value={`${daily.callActivity}`} delta="Down 38%" tone="bad" />
-            <Stat label="CPA per call" value={money(daily.callCpa)} delta="Up 44%" tone="bad" />
+            <Stat
+              label="Spend"
+              value={money(daily.spend)}
+              delta={delta(daily.spend, previousDaily.spend, "vs yesterday")}
+              tone={deltaTone(daily.spend, previousDaily.spend, true)}
+            />
+            <Stat
+              label="Total leads"
+              value={whole(daily.totalLeads)}
+              delta={delta(daily.totalLeads, previousDaily.totalLeads, "vs yesterday")}
+              tone={deltaTone(daily.totalLeads, previousDaily.totalLeads, false)}
+            />
+            <Stat
+              label="Agent-Fit leads"
+              value={whole(daily.agentFitLeads)}
+              delta={delta(daily.agentFitLeads, previousDaily.agentFitLeads, "vs yesterday")}
+              tone={deltaTone(daily.agentFitLeads, previousDaily.agentFitLeads, false)}
+            />
+            <Stat
+              label="CPA per Agent-Fit"
+              value={money(daily.agentFitCpa)}
+              delta={delta(daily.agentFitCpa, previousDaily.agentFitCpa, "vs yesterday")}
+              tone={deltaTone(daily.agentFitCpa, previousDaily.agentFitCpa, true)}
+            />
+            <Stat
+              label="Call activity"
+              value={whole(daily.callActivity)}
+              delta={delta(daily.callActivity, previousDaily.callActivity, "vs yesterday")}
+              tone={deltaTone(daily.callActivity, previousDaily.callActivity, false)}
+            />
+            <Stat
+              label="CPA per call"
+              value={money(daily.callCpa)}
+              delta={delta(daily.callCpa, previousDaily.callCpa, "vs yesterday")}
+              tone={deltaTone(daily.callCpa, previousDaily.callCpa, true)}
+            />
           </div>
 
           <div className="mt-6 border-t border-[#171717] pt-5">
             <h3 className="font-serif text-2xl font-semibold">Stage Snapshot</h3>
             <div className="mt-4 space-y-3 text-base">
+              <Line label="Sales Qualified" value={daily.salesQualified} />
+              <Line label="In Review, not counted as SQL" value={daily.inReview} />
               <Line label="Booked meetings" value={daily.bookedMeetings} />
               <Line label="No-shows" value={daily.noShows} />
               <Line label="Cancelled" value={daily.cancelled} />
@@ -116,11 +139,7 @@ export default function Home() {
             <p className="font-serif text-sm uppercase tracking-[0.18em] text-[#d7cdbb]">
               One-line read
             </p>
-            <p className="mt-2 text-xl leading-8">
-              Today is weaker than yesterday: less volume, fewer Agent-Fit leads, and higher
-              CPAs. Tomorrow&apos;s outcomes
-              will tell us whether this is timing lag or quality dropping.
-            </p>
+            <p className="mt-2 text-xl leading-8">{dailyOneLine(daily, previousDaily)}</p>
           </div>
         </article>
 
@@ -133,15 +152,35 @@ export default function Home() {
               <h2 className="mt-2 font-serif text-4xl font-semibold">Quality Scorecard</h2>
             </div>
             <p className="font-serif text-sm uppercase tracking-[0.14em] text-[#6b6254]">
-              {rolling.period}
+              {formatShortRange(rolling.from, rolling.to)}
             </p>
           </div>
 
           <div className="mt-5 grid grid-cols-2 gap-px bg-[#171717] md:grid-cols-4">
-            <Stat label="Spend" value={money(rolling.spend)} delta="Up 56% vs prior 7 days" tone="neutral" />
-            <Stat label="Agent-Fit leads" value={`${rolling.agentFitLeads}`} delta="Up 44%" tone="good" />
-            <Stat label="Agent-Fit CPA" value={money(rolling.agentFitCpa)} delta="Up 9%" tone="bad" />
-            <Stat label="Projected SQL CPA" value={`~${money(644)}`} delta="Down 11%" tone="good" />
+            <Stat
+              label="Spend"
+              value={money(rolling.spend)}
+              delta={delta(rolling.spend, previousRolling.spend, "vs prior 7 days")}
+              tone="neutral"
+            />
+            <Stat
+              label="Agent-Fit leads"
+              value={whole(rolling.agentFitLeads)}
+              delta={delta(rolling.agentFitLeads, previousRolling.agentFitLeads, "vs prior 7 days")}
+              tone={deltaTone(rolling.agentFitLeads, previousRolling.agentFitLeads, false)}
+            />
+            <Stat
+              label="Agent-Fit CPA"
+              value={money(rolling.agentFitCpa)}
+              delta={delta(rolling.agentFitCpa, previousRolling.agentFitCpa, "vs prior 7 days")}
+              tone={deltaTone(rolling.agentFitCpa, previousRolling.agentFitCpa, true)}
+            />
+            <Stat
+              label="Projected SQL CPA"
+              value={`~${money(rolling.projectedQualifiedCpa)}`}
+              delta={delta(rolling.projectedQualifiedCpa, previousRolling.projectedQualifiedCpa, "vs prior 7 days")}
+              tone={deltaTone(rolling.projectedQualifiedCpa, previousRolling.projectedQualifiedCpa, true)}
+            />
           </div>
 
           <div className="mt-6 grid gap-6 md:grid-cols-[1fr_0.9fr]">
@@ -149,7 +188,7 @@ export default function Home() {
               <h3 className="font-serif text-2xl font-semibold">The Math</h3>
               <p className="mt-3 text-lg leading-8">
                 We are not counting In Review as SQL. Resolved conversion includes
-                no-shows and reschedules, and excludes only pending calls.
+                no-shows, reschedules, and cancellations, and excludes only pending calls.
               </p>
               <div className="mt-5 space-y-3 text-base">
                 <Line label="Sales Qualified" value={rolling.salesQualified} />
@@ -158,7 +197,7 @@ export default function Home() {
                 <Line label="Not Qualified" value={rolling.notQualified} />
                 <Line label="Rescheduled" value={rolling.rescheduled} />
                 <Line label="Cancelled" value={rolling.cancelled} />
-                <Line label="Pending calls" value={rolling.pending} />
+                <Line label="Pending calls" value={rolling.bookedMeetings} />
               </div>
             </div>
 
@@ -167,10 +206,10 @@ export default function Home() {
                 Projection
               </p>
               <p className="mt-3 font-serif text-5xl font-semibold">
-                {rolling.conversionRate}%
+                {percent(rolling.sqlRate)}
               </p>
               <p className="mt-2 text-base leading-7">
-                SQL rate excluding In Review, including no-shows and reschedules.
+                SQL rate excluding In Review, including no-shows, reschedules, and cancellations.
               </p>
 
               <div className="mt-6 border-t border-[#171717] pt-5">
@@ -183,8 +222,8 @@ export default function Home() {
                   ~{money(rolling.projectedQualifiedCpa)}
                 </p>
                 <p className="mt-2 text-base leading-7">
-                  Cost per projected qualified lead, improved from ~{money(720)} in the prior
-                  7-day period.
+                  Cost per projected qualified lead, compared with ~
+                  {money(previousRolling.projectedQualifiedCpa)} in the prior 7-day period.
                 </p>
               </div>
             </div>
@@ -192,14 +231,26 @@ export default function Home() {
 
           <div className="mt-7 border-t-2 border-[#171717] pt-5">
             <h3 className="font-serif text-2xl font-semibold">CEO Takeaway</h3>
-            <p className="mt-3 text-lg leading-8">
-              The rolling week is stronger than the prior week on volume and projected
-              qualified CPA. Spend is up, but Agent-Fit volume is up too, and projected SQL
-              CPA improved from about <b>{money(720)}</b> to <b>{money(644)}</b>. Keep spend
-              steady, fix show rate, and let the pending calls resolve before scaling harder.
-            </p>
+            <p className="mt-3 text-lg leading-8">{rollingTakeaway(rolling, previousRolling)}</p>
           </div>
         </article>
+      </section>
+    </main>
+  );
+}
+
+function UnavailablePage({ message }: { message: string }) {
+  return (
+    <main className="min-h-screen bg-[#f4f0e8] px-5 py-12 text-[#171717]">
+      <section className="mx-auto max-w-3xl border-y-2 border-[#171717] py-8">
+        <p className="font-serif text-sm uppercase tracking-[0.26em] text-[#6b6254]">
+          Nas B2B Marketing Desk
+        </p>
+        <h1 className="mt-3 font-serif text-5xl font-semibold">The Growth Ledger</h1>
+        <p className="mt-6 text-xl leading-8">
+          Live data is not available right now, so I am not showing stale numbers.
+        </p>
+        <p className="mt-4 border-l-4 border-[#171717] pl-4 text-base text-[#6b6254]">{message}</p>
       </section>
     </main>
   );
@@ -208,7 +259,7 @@ export default function Home() {
 function Stat({
   label,
   value,
-  delta,
+  delta: deltaText,
   tone = "neutral",
 }: {
   label: string;
@@ -226,7 +277,7 @@ function Stat({
     <div className="bg-[#fbf8f0] p-4">
       <p className="font-serif text-xs uppercase tracking-[0.18em] text-[#6b6254]">{label}</p>
       <p className="mt-2 font-serif text-3xl font-semibold">{value}</p>
-      {delta ? <p className={`mt-2 text-sm font-medium ${toneClass}`}>{delta}</p> : null}
+      {deltaText ? <p className={`mt-2 text-sm font-medium ${toneClass}`}>{deltaText}</p> : null}
     </div>
   );
 }
@@ -238,4 +289,88 @@ function Line({ label, value }: { label: string; value: number }) {
       <span className="font-serif text-2xl font-semibold">{value}</span>
     </div>
   );
+}
+
+function delta(current: number | null, previous: number | null, suffix: string) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || previous === 0) return "";
+  const change = ((current as number) - (previous as number)) / (previous as number);
+  const rounded = Math.round(Math.abs(change) * 100);
+  if (rounded === 0) return `Flat ${suffix}`;
+  return `${change > 0 ? "Up" : "Down"} ${rounded}% ${suffix}`;
+}
+
+function deltaTone(current: number | null, previous: number | null, lowerIsBetter: boolean) {
+  if (!Number.isFinite(current) || !Number.isFinite(previous) || previous === 0) return "neutral";
+  const change = ((current as number) - (previous as number)) / (previous as number);
+  if (Math.round(Math.abs(change) * 100) === 0) return "neutral";
+  const isGood = lowerIsBetter ? change < 0 : change > 0;
+  return isGood ? "good" : "bad";
+}
+
+function frontPageHeadline(daily: ScorecardRange, rolling: ScorecardRange) {
+  if (rolling.projectedQualifiedCpa && rolling.projectedQualifiedCpa <= 700) {
+    return "The weekly funnel is still holding, but daily quality needs watching.";
+  }
+  if (daily.agentFitLeads === 0) {
+    return "Today is a light quality day, and the funnel needs attention.";
+  }
+  return "The machine is producing signal, but the next calls decide the story.";
+}
+
+function frontPageRead(
+  daily: ScorecardRange,
+  previousDaily: ScorecardRange,
+  rolling: ScorecardRange,
+  previousRolling: ScorecardRange,
+) {
+  const dailyFitDelta = delta(daily.agentFitCpa, previousDaily.agentFitCpa, "vs yesterday");
+  const rollingCpaDelta = delta(
+    rolling.projectedQualifiedCpa,
+    previousRolling.projectedQualifiedCpa,
+    "vs prior 7 days",
+  );
+  return `Daily Agent-Fit CPA is ${money(daily.agentFitCpa)}${dailyFitDelta ? `, ${dailyFitDelta.toLowerCase()}` : ""}. Rolling projected qualified CPA is ~${money(rolling.projectedQualifiedCpa)}${rollingCpaDelta ? `, ${rollingCpaDelta.toLowerCase()}` : ""}.`;
+}
+
+function dailyOneLine(daily: ScorecardRange, previousDaily: ScorecardRange) {
+  const fitTone = deltaTone(daily.agentFitCpa, previousDaily.agentFitCpa, true);
+  if (fitTone === "bad") {
+    return "Today is more expensive than yesterday on Agent-Fit CPA. Watch whether this is tracking lag or traffic quality softening.";
+  }
+  if (fitTone === "good") {
+    return "Today is improving on Agent-Fit CPA. Keep watching whether the cheaper fit volume turns into qualified calls.";
+  }
+  return "Today is broadly flat. The rolling week remains the better read for qualified lead economics.";
+}
+
+function rollingTakeaway(rolling: ScorecardRange, previousRolling: ScorecardRange) {
+  const cpaTone = deltaTone(rolling.projectedQualifiedCpa, previousRolling.projectedQualifiedCpa, true);
+  if (cpaTone === "good") {
+    return `The rolling week is improving on projected qualified CPA, moving from about ${money(previousRolling.projectedQualifiedCpa)} to ${money(rolling.projectedQualifiedCpa)}. Keep spend steady, reduce no-shows, and let pending calls resolve before scaling harder.`;
+  }
+  if (cpaTone === "bad") {
+    return `The rolling week is getting more expensive on projected qualified CPA, moving from about ${money(previousRolling.projectedQualifiedCpa)} to ${money(rolling.projectedQualifiedCpa)}. Check Agent-Fit quality, show rate, and whether spend is drifting into weaker traffic.`;
+  }
+  return `The rolling week is broadly stable at about ${money(rolling.projectedQualifiedCpa)} per projected qualified lead. The next unlock is still show rate and sales-qualified conversion.`;
+}
+
+function formatDisplayDate(dateString: string) {
+  return new Date(`${dateString}T00:00:00Z`).toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+    year: "numeric",
+  });
+}
+
+function formatShortRange(from: string, to: string) {
+  return `${formatShortDate(from)}-${formatShortDate(to)}`;
+}
+
+function formatShortDate(dateString: string) {
+  return new Date(`${dateString}T00:00:00Z`).toLocaleDateString("en-US", {
+    timeZone: "UTC",
+    month: "short",
+    day: "numeric",
+  });
 }
