@@ -79,7 +79,7 @@ async function buildRange({
 }): Promise<ScorecardRange> {
   const sheet = summarizeSheetRange({ parsedSheet, from, to });
   const dashboard = await summarizeDashboardRange({ from, to, cookie });
-  const spend = dashboard.campaignSpendTotal;
+  const spend = dashboard.dashboardSpend ?? dashboard.campaignSpendTotal;
   const agentFitCpa = cost(spend, sheet.agentFitLeads);
   const callActivity = countStages(sheet.allByStage, [
     "Sales Qualified",
@@ -165,9 +165,28 @@ async function summarizeDashboardRange({ from, to, cookie }: { from: string; to:
     campaigns[ad.campaignName].sql += ad.sql || 0;
   }
   return {
+    dashboardSpend: parseOverallDashboard(html).dashboardSpend,
     campaignSpendTotal: Object.values(campaigns).reduce((sum, campaign) => sum + campaign.spend, 0),
     campaigns,
   };
+}
+
+function parseOverallDashboard(html: string) {
+  const text = textOnly(html);
+  const spendMatch = text.match(/Ad spend\s+\$([0-9,.]+)/i);
+  return {
+    dashboardSpend: number(spendMatch?.[1]),
+  };
+}
+
+function textOnly(html: string) {
+  return html.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ");
+}
+
+function number(value: string | undefined) {
+  if (value === undefined) return null;
+  const parsed = Number(String(value).replace(/[^0-9.-]/g, ""));
+  return Number.isFinite(parsed) ? parsed : null;
 }
 
 function summarizeSheetRange({ parsedSheet, from, to }: { parsedSheet: ParsedSheet; from: string; to: string }) {
