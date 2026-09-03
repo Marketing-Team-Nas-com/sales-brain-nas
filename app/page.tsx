@@ -75,9 +75,12 @@ function ScorecardPage({
       <section className="mx-auto grid max-w-6xl gap-6 px-5 py-6 lg:grid-cols-[0.95fr_1.25fr]">
         <article className="border-y-2 border-[#171717] py-5">
           <p className="font-serif text-sm uppercase tracking-[0.2em] text-[#6b6254]">
-            Today
+            Today So Far
           </p>
           <h2 className="mt-2 font-serif text-4xl font-semibold">Daily CEO Read</h2>
+          <p className="mt-2 font-serif text-sm uppercase tracking-[0.14em] text-[#6b6254]">
+            {formatShortRange(daily.from, daily.to)} vs {formatShortRange(previousDaily.from, previousDaily.to)}
+          </p>
           <p className="mt-4 text-lg leading-8">
             This is the live read from the dashboard and sheet. Qualified outcomes can lag
             the day&apos;s lead flow, so the daily view is best for CPA movement and call

@@ -51,8 +51,8 @@ export async function getMarketingScorecard(): Promise<MarketingScorecard> {
   const parsedSheet = parseCsv(csv);
 
   const [daily, previousDaily, rolling, previousRolling] = await Promise.all([
-    buildRange({ from: yesterday, to: today, parsedSheet, cookie }),
-    buildRange({ from: twoDaysAgo, to: yesterday, parsedSheet, cookie }),
+    buildRange({ from: today, to: today, parsedSheet, cookie }),
+    buildRange({ from: yesterday, to: yesterday, parsedSheet, cookie }),
     buildRange({ from: current7Start, to: today, parsedSheet, cookie }),
     buildRange({ from: previous7Start, to: previous7End, parsedSheet, cookie }),
   ]);
