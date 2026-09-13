@@ -14,7 +14,7 @@ export type LarkReportBlock =
   | { type: "heading1"; text: string }
   | { type: "heading2"; text: string }
   | { type: "heading3"; text: string }
-  | { type: "text"; text: string }
+  | { type: "text"; text: string; bold?: boolean; underline?: boolean }
   | { type: "table"; rows: string[][]; columnWidths?: number[] }
   | { type: "divider" };
 
@@ -85,6 +85,57 @@ export async function sendLarkTextReport({
 
   if (!response.ok || payload.code !== 0) {
     throw new Error(payload.msg || "Unable to send Lark report.");
+  }
+
+  return payload;
+}
+
+export type LarkPostElement =
+  | {
+      tag: "text";
+      text: string;
+      style?: Array<"bold" | "underline" | "italic" | "lineThrough">;
+    }
+  | {
+      tag: "a";
+      text: string;
+      href: string;
+      style?: Array<"bold" | "underline" | "italic" | "lineThrough">;
+    };
+
+export async function sendLarkPostReport({
+  chatId,
+  content,
+}: {
+  chatId: string;
+  content: LarkPostElement[][];
+}) {
+  const token = await getTenantAccessToken();
+  const response = await fetch(
+    `${LARK_BASE_URL}/im/v1/messages?receive_id_type=chat_id`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      body: JSON.stringify({
+        receive_id: chatId,
+        msg_type: "post",
+        content: JSON.stringify({
+          en_us: {
+            title: "",
+            content,
+          },
+        }),
+      }),
+    },
+  );
+
+  const payload = (await response.json()) as { code: number; msg: string };
+
+  if (!response.ok || payload.code !== 0) {
+    throw new Error(payload.msg || "Unable to send Lark post report.");
   }
 
   return payload;
@@ -353,11 +404,13 @@ async function appendParagraphsAtIndex({
   parentBlockId,
   paragraphs,
   index,
+  bold = false,
 }: {
   documentId: string;
   parentBlockId: string;
   paragraphs: string[];
   index: number;
+  bold?: boolean;
 }) {
   const chunks = chunk(paragraphs.filter(Boolean), 40);
   let nextIndex = index;
@@ -376,7 +429,7 @@ async function appendParagraphsAtIndex({
                 {
                   text_run: {
                     content: paragraph,
-                    text_element_style: {},
+                    text_element_style: bold ? { bold: true } : {},
                   },
                 },
               ],
@@ -419,17 +472,28 @@ function toLarkBlock(block: LarkReportBlock) {
 
   return {
     block_type: 2,
-    text: textPayload(block.type === "text" ? block.text : `- ${block.text}`),
+    text: textPayload(
+      block.type === "text" ? block.text : `- ${block.text}`,
+      block.type === "text"
+        ? { bold: block.bold, underline: block.underline }
+        : undefined,
+    ),
   };
 }
 
-function textPayload(content: string) {
+function textPayload(
+  content: string,
+  style?: { bold?: boolean; underline?: boolean },
+) {
   return {
     elements: [
       {
         text_run: {
           content,
-          text_element_style: {},
+          text_element_style: {
+            ...(style?.bold ? { bold: true } : {}),
+            ...(style?.underline ? { underline: true } : {}),
+          },
         },
       },
     ],
@@ -529,7 +593,12 @@ async function appendLarkTable({
 
       if (!cellId || !value) continue;
 
-      await appendTextToBlock({ documentId, blockId: cellId, text: value });
+      await appendTextToBlock({
+        documentId,
+        blockId: cellId,
+        text: value,
+        bold: row === 0,
+      });
     }
   }
 }
@@ -588,16 +657,19 @@ async function appendTextToBlock({
   documentId,
   blockId,
   text,
+  bold = false,
 }: {
   documentId: string;
   blockId: string;
   text: string;
+  bold?: boolean;
 }) {
   await appendParagraphsAtIndex({
     documentId,
     parentBlockId: blockId,
     paragraphs: [text.slice(0, 1800)],
     index: 0,
+    bold,
   });
 }
 
@@ -606,22 +678,46 @@ async function larkRequest<T>(
   init: RequestInit = {},
 ) {
   const token = await getTenantAccessToken();
-  const response = await fetch(`${LARK_BASE_URL}${path}`, {
-    ...init,
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json; charset=utf-8",
-      ...init.headers,
-    },
-  });
+  const maxAttempts = 5;
 
-  const payload = (await response.json()) as LarkApiPayload<T>;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const response = await fetch(`${LARK_BASE_URL}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json; charset=utf-8",
+        ...init.headers,
+      },
+    });
 
-  if (!response.ok || payload.code !== 0) {
-    throw new Error(payload.msg || `Lark API request failed: ${path}`);
+    if (response.status === 429 && attempt < maxAttempts) {
+      const retryAfterSeconds = Number(response.headers.get("retry-after"));
+      const delayMs = Number.isFinite(retryAfterSeconds)
+        ? Math.max(retryAfterSeconds * 1000, 1000)
+        : 1000 * 2 ** (attempt - 1);
+      await new Promise((resolve) => setTimeout(resolve, delayMs));
+      continue;
+    }
+
+    const responseText = await response.text();
+    let payload: LarkApiPayload<T>;
+
+    try {
+      payload = JSON.parse(responseText) as LarkApiPayload<T>;
+    } catch {
+      throw new Error(
+        `Lark API returned HTTP ${response.status} with an unreadable response for ${path}.`,
+      );
+    }
+
+    if (!response.ok || payload.code !== 0) {
+      throw new Error(payload.msg || `Lark API request failed: ${path}`);
+    }
+
+    return payload.data as T;
   }
 
-  return payload.data as T;
+  throw new Error(`Lark API rate limit persisted after ${maxAttempts} attempts for ${path}.`);
 }
 
 function larkDocumentUrl(documentId: string) {

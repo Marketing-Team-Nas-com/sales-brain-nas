@@ -12,15 +12,21 @@ MONDAY_SALES_BOARD_ID=5029402147
 LARK_APP_ID=
 LARK_APP_SECRET=
 LARK_VERIFICATION_TOKEN=
+LARK_SALES_PULSE_CHAT_ID=oc_9a1f9cd3a58c8a005350a0f6851b9a66
+LARK_SALES_REPORT_EDITOR_EMAILS=roge@nas.io,alex@nasdaily.com,lesha@nasdaily.com
 OPENAI_API_KEY=
 OPENAI_MODEL=gpt-5.6-terra
 OPENAI_REASONING_EFFORT=medium
 SALES_BRAIN_CRON_SECRET=
 SALES_BRAIN_ENABLE_SCHEDULER=true
+SALES_BRAIN_ENABLE_REPORT_SCHEDULER=true
+SALES_BRAIN_REPORT_DAYS=tuesday,thursday
+SALES_BRAIN_REPORT_HOUR=14
+SALES_BRAIN_ENABLE_12H_PULSE=true
 SALES_BRAIN_MEMORY_DIR=/data/sales-brain
 ```
 
-`LARK_SALES_CHAT_ID` is only required for scheduled/manual report pushes. Lark chat replies use the incoming message id and do not require it.
+`LARK_SALES_PULSE_CHAT_ID` is the destination for the Tuesday/Thursday executive report and the Monday-Saturday 9 AM/9 PM pulse. The Monday 9 AM pulse covers Saturday 9 PM through Monday 9 AM because Sunday has no send.
 
 ## Sales Brain memory
 

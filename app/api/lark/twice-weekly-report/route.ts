@@ -1,20 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
-import { createTwiceWeeklySalesReport } from "../../../lib/twice-weekly-report";
+import { createExecutiveSalesPulseReport } from "../../../lib/executive-sales-pulse-report";
 
 type ReportRequest = {
   chatId?: string;
   sendToChat?: boolean;
-  previewOnly?: boolean;
 };
 
 export async function POST(request: NextRequest) {
+  const expected = process.env.SALES_BRAIN_CRON_SECRET;
+  const provided = request.headers.get("authorization");
+  if (!expected || provided !== `Bearer ${expected}`) {
+    return NextResponse.json({ error: "Invalid cron secret." }, { status: 401 });
+  }
   const body = (await request.json().catch(() => ({}))) as ReportRequest;
 
   try {
-    const result = await createTwiceWeeklySalesReport({
+    const result = await createExecutiveSalesPulseReport({
       chatId: body.chatId,
       sendToChat: body.sendToChat !== false,
-      previewOnly: body.previewOnly === true,
     });
 
     return NextResponse.json(result);

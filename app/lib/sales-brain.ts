@@ -1,4 +1,4 @@
-import type { SalesDeal } from "./monday";
+import type { MondayBoardActivityChange, SalesDeal } from "./monday";
 import type { ConversationMessage, SalesContextNote } from "./sales-memory";
 
 type BrainAnswerInput = {
@@ -6,6 +6,7 @@ type BrainAnswerInput = {
   deals: SalesDeal[];
   conversation?: ConversationMessage[];
   contextNotes?: SalesContextNote[];
+  activityChanges?: MondayBoardActivityChange[];
 };
 
 type StageSummary = {
@@ -36,14 +37,36 @@ export async function answerSalesQuestion({
   deals,
   conversation = [],
   contextNotes = [],
+  activityChanges,
 }: BrainAnswerInput) {
   const fallback = deterministicSalesAnswer(question, deals);
+  const leadContextAnswer =
+    activityChanges === undefined
+      ? ""
+      : deterministicLeadContextAnswer(
+          question,
+          deals,
+          conversation,
+          activityChanges,
+        );
+  const activityAnswer =
+    activityChanges === undefined
+      ? ""
+      : deterministicActivityAnswer(question, deals, activityChanges);
   const directAnswer = directSpecificLeadAnswer({ question, deals, conversation });
   const cmoDinnerAnswer = directCmoDinnerAnswer(question, deals);
   const normalized = normalizeQuestionForIntent(question);
 
   if (directAnswer) {
     return directAnswer;
+  }
+
+  if (leadContextAnswer) {
+    return leadContextAnswer;
+  }
+
+  if (activityAnswer) {
+    return activityAnswer;
   }
 
   if (cmoDinnerAnswer) {
@@ -945,8 +968,8 @@ function searchTokens(text: string) {
   ];
 }
 
-function normalizeSearch(value: string) {
-  return value.toLowerCase().replace(/[^a-z0-9]/g, "");
+function normalizeSearch(value: string | undefined | null) {
+  return (value || "").toLowerCase().replace(/[^a-z0-9]/g, "");
 }
 
 function summarizeByStage(deals: SalesDeal[]) {
@@ -1566,12 +1589,12 @@ function formatDateRangeCallReport(
   const lines = [
     `From ${friendlyDate(startDate)} to ${friendlyDate(endDate)}:`,
     `- ${rangeCalls.length} calls were scheduled.`,
-    `- ${happenedCalls.length} likely happened.`,
-    `- ${fitHappenedCalls.length} of the calls that happened were Fit leads.`,
+    `- ${happenedCalls.length} were completed, based only on Call Stage being Sales Qualified, Not Qualified, or In Review.`,
+    `- ${fitHappenedCalls.length} of the completed calls were Fit leads.`,
     `- ${noShowCalls.length} were no-shows.`,
     `- ${cancelledCalls.length} were cancelled.`,
     `- ${rescheduledCalls.length} were rescheduled.`,
-    `- ${millionPlusHappenedCalls.length} of the calls that happened were $1M+ leads.`,
+    `- ${millionPlusHappenedCalls.length} of the completed calls were $1M+ leads.`,
   ];
 
   if (wantsCallStatusList) {
@@ -1746,7 +1769,294 @@ function salesCrmDeals(deals: SalesDeal[]) {
 }
 
 function isHappenedCall(deal: SalesDeal) {
-  return !isNoShowDeal(deal) && !isCancelledDeal(deal) && !isRescheduledDeal(deal);
+  return ["Sales Qualified", "Not Qualified", "In Review"].includes(
+    deal.callStage,
+  );
+}
+
+export function salesActivityWindowForQuestion(question: string) {
+  const normalized = normalizeQuestionForIntent(question);
+  if (
+    !/\b(call|calls|meeting|meetings|sign|signed|agreement stage|confirmed|verbal|2nd call|second call|lost|gone cold|happened|notes?|comments?|recommend|interested|changed|timeline|why)\b/.test(
+      normalized,
+    )
+  ) {
+    return null;
+  }
+  const range =
+    requestedDateRange(normalized) ||
+    (/\byesterday\b/.test(normalized)
+      ? {
+          startDate: daysAgoInSingapore(1),
+          endDate: daysAgoInSingapore(1),
+        }
+      : /\btoday\b/.test(normalized)
+        ? {
+            startDate: todayInSingapore(),
+            endDate: todayInSingapore(),
+          }
+        : null);
+  const resolvedRange =
+    range ||
+    (/\b(happened|notes?|comments?|recommend|interested|changed|timeline|why)\b/.test(
+      normalized,
+    )
+      ? {
+          startDate: daysAgoInSingapore(89),
+          endDate: todayInSingapore(),
+        }
+      : null);
+  if (!resolvedRange) return null;
+  return {
+    ...resolvedRange,
+    from: `${resolvedRange.startDate}T00:00:00+08:00`,
+    to: `${resolvedRange.endDate}T23:59:59+08:00`,
+  };
+}
+
+function deterministicLeadContextAnswer(
+  question: string,
+  deals: SalesDeal[],
+  conversation: ConversationMessage[],
+  activityChanges: MondayBoardActivityChange[],
+) {
+  const normalized = normalizeQuestionForIntent(question);
+  if (
+    !/\b(what happened|notes?|comments?|recommend|interested|changed|timeline|why|current status|latest update)\b/.test(
+      normalized,
+    )
+  ) {
+    return "";
+  }
+  const relevant = findRelevantDeals(deals, question, conversation);
+  if (!relevant.length) return "";
+  const deal = relevant[0];
+  const duplicateMatches = relevant.filter(
+    (candidate) =>
+      normalizeSearch(candidate.account) === normalizeSearch(deal.account),
+  );
+  if (duplicateMatches.length > 1) {
+    return [
+      `I found ${duplicateMatches.length} Monday records for ${deal.account}. Please specify the contact or email:`,
+      ...duplicateMatches.map(
+        (candidate) =>
+          `- ${candidate.account}${candidate.email ? ` (${candidate.email})` : ""}`,
+      ),
+    ].join("\n");
+  }
+
+  const parsed = [...(deal.salesPulseUpdates || [])].sort(
+    (left, right) => Date.parse(right.timestamp) - Date.parse(left.timestamp),
+  );
+  const questionnaire = parsed.find(
+    (update) => update.classification === "structured_questionnaire",
+  );
+  const salespersonNote = parsed.find(
+    (update) => update.classification === "salesperson_note",
+  );
+  const unrelatedCount = parsed.filter(
+    (update) => update.classification === "unrelated_or_system_comment",
+  ).length;
+  const timeline = activityChanges
+    .filter((change) => change.itemId === deal.id)
+    .sort((left, right) => Date.parse(right.createdAt) - Date.parse(left.createdAt))
+    .slice(0, 5);
+  const conflicts: string[] = [];
+  if (
+    deal.callStage === "Sales Qualified" &&
+    questionnaire?.questionnaire.interestedInNextStage === false
+  ) {
+    conflicts.push("Current Call Stage is Sales Qualified, but customer intent is No.");
+  }
+  if (
+    deal.callStage === "Sales Qualified" &&
+    questionnaire?.questionnaire.worthPursuing === false
+  ) {
+    conflicts.push("Current Call Stage is Sales Qualified, but the salesperson recommendation is No.");
+  }
+  const latestVerdictChange = timeline.find((change) =>
+    /^Final Verdict$/i.test(change.columnTitle),
+  );
+  if (
+    latestVerdictChange &&
+    latestVerdictChange.value &&
+    latestVerdictChange.value !== deal.finalVerdict
+  ) {
+    conflicts.push(
+      `Latest visible Final Verdict activity is ${latestVerdictChange.value}, while the current field is ${deal.finalVerdict || "Unknown"}.`,
+    );
+  }
+
+  return [
+    deal.account,
+    `Current CRM: Call Stage ${usableField(deal.callStage) ? deal.callStage : "Unknown"}; Next Steps ${usableField(deal.nextStepsStatus) ? deal.nextStepsStatus : "Unknown"}; Final Verdict ${usableField(deal.finalVerdict) ? deal.finalVerdict : "Unknown"}.`,
+    questionnaire
+      ? `Latest questionnaire (${friendlyTimestamp(questionnaire.timestamp)}, ${questionnaire.authorName || "author unknown"}): decision-maker ${yesNoUnknown(questionnaire.questionnaire.decisionMaker)}; revenue at least $5M ${yesNoUnknown(questionnaire.questionnaire.revenueAtLeast5m)}; marketing spend at least $500K ${yesNoUnknown(questionnaire.questionnaire.marketingSpendAtLeast500k)}; interested in next stage ${yesNoUnknown(questionnaire.questionnaire.interestedInNextStage)}; worth pursuing ${yesNoUnknown(questionnaire.questionnaire.worthPursuing)}; verdict ${questionnaire.verdict || "Unknown"}.`
+      : "Latest questionnaire: none in the 10 preserved Monday updates.",
+    salespersonNote
+      ? `Latest salesperson note (${friendlyTimestamp(salespersonNote.timestamp)}, ${salespersonNote.authorName || "author unknown"}): ${compactEvidence(salespersonNote.notes || salespersonNote.body)}`
+      : "Latest salesperson note: none in the 10 preserved Monday updates.",
+    timeline.length
+      ? `Recent activity: ${timeline
+          .map(
+            (change) =>
+              `${friendlyTimestamp(change.createdAt)} - ${change.columnTitle}: ${change.previousValue || "blank"} → ${change.value || "blank"}`,
+          )
+          .join("; ")}.`
+      : "Recent activity: no matching activity in the retrieved 90-day window.",
+    conflicts.length ? `Conflicts to review: ${conflicts.join(" ")}` : "",
+    questionnaire?.googleDocsUrl || salespersonNote?.googleDocsUrl
+      ? `Meeting document: ${questionnaire?.googleDocsUrl || salespersonNote?.googleDocsUrl} (link preserved; document content was not opened).`
+      : "Meeting document: none preserved in the relevant updates.",
+    unrelatedCount
+      ? `${unrelatedCount} unrelated or system ${unrelatedCount === 1 ? "comment was" : "comments were"} preserved but excluded from the sales summary.`
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function yesNoUnknown(value: boolean | null) {
+  return value === true ? "Yes" : value === false ? "No" : "Unknown";
+}
+
+function compactEvidence(value: string) {
+  const text = value.replace(/<[^>]+>/g, " ").replace(/\s+/g, " ").trim();
+  return text.length > 320 ? `${text.slice(0, 317)}...` : text;
+}
+
+function friendlyTimestamp(value: string) {
+  return `${new Intl.DateTimeFormat("en-SG", {
+    timeZone: "Asia/Singapore",
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(value))} SGT`;
+}
+
+function deterministicActivityAnswer(
+  question: string,
+  deals: SalesDeal[],
+  activityChanges: MondayBoardActivityChange[],
+) {
+  const window = salesActivityWindowForQuestion(question);
+  if (!window) return "";
+  const normalized = normalizeQuestionForIntent(question);
+  if (/\b(call|calls|meeting|meetings)\b/.test(normalized)) {
+    return deterministicCallActivityAnswer(window, activityChanges);
+  }
+  const target =
+    /\bsign(?:ed)?\b/.test(normalized)
+      ? "Signed"
+      : /\bagreement stage\b/.test(normalized)
+        ? "Agreement Stage"
+        : /\bconfirmed|verbal\b/.test(normalized)
+          ? "Confirmed (Verbal)"
+          : /\b(?:2nd|second) call\b/.test(normalized)
+            ? "2nd call with Nuseir"
+            : /\bgone cold\b/.test(normalized)
+              ? "Gone Cold"
+              : /\blost\b/.test(normalized)
+                ? "Lost"
+                : "";
+  if (!target) return "";
+  const changes = activityChanges.filter(
+    (change) =>
+      /^Final Verdict$/i.test(change.columnTitle) &&
+      change.value.toLowerCase() === target.toLowerCase() &&
+      sgtDate(change.createdAt) >= window.startDate &&
+      sgtDate(change.createdAt) <= window.endDate,
+  );
+  const latestByItem = new Map<string, MondayBoardActivityChange>();
+  for (const change of changes) {
+    const current = latestByItem.get(change.itemId);
+    if (!current || Date.parse(change.createdAt) > Date.parse(current.createdAt)) {
+      latestByItem.set(change.itemId, change);
+    }
+  }
+  const dealById = new Map(deals.map((deal) => [deal.id, deal]));
+  const moved = [...latestByItem.values()];
+  const confirmed = moved.filter(
+    (change) =>
+      dealById.get(change.itemId)?.finalVerdict.toLowerCase() ===
+      target.toLowerCase(),
+  );
+  const conflicts = moved.filter(
+    (change) =>
+      dealById.get(change.itemId)?.finalVerdict.toLowerCase() !==
+      target.toLowerCase(),
+  );
+  const period =
+    window.startDate === window.endDate
+      ? friendlyDate(window.startDate)
+      : `${friendlyDate(window.startDate)} to ${friendlyDate(window.endDate)}`;
+  const lines = [
+    `${confirmed.length} ${confirmed.length === 1 ? "lead is" : "leads are"} confirmed as ${target} for ${period}${confirmed.length ? `: ${confirmed.map((change) => change.itemName || dealById.get(change.itemId)?.account || change.itemId).join(", ")}.` : ""}`,
+  ];
+  if (conflicts.length) {
+    lines.push(
+      `${conflicts.length} activity-log ${conflicts.length === 1 ? "conflict needs" : "conflicts need"} review: ${conflicts
+        .map((change) => {
+          const deal = dealById.get(change.itemId);
+          return `${change.itemName || deal?.account || change.itemId} moved to ${target}, but currently shows ${deal?.finalVerdict || "Unknown"}`;
+        })
+        .join("; ")}.`,
+    );
+  }
+  return lines.join(" ");
+}
+
+function deterministicCallActivityAnswer(
+  window: NonNullable<ReturnType<typeof salesActivityWindowForQuestion>>,
+  activityChanges: MondayBoardActivityChange[],
+) {
+  const counts = {
+    "New Meeting": 0,
+    Completed: 0,
+    Rescheduled: 0,
+    "No-show": 0,
+    Cancelled: 0,
+  };
+  for (const change of activityChanges) {
+    if (
+      !/^Call Stage$/i.test(change.columnTitle) ||
+      sgtDate(change.createdAt) < window.startDate ||
+      sgtDate(change.createdAt) > window.endDate
+    ) {
+      continue;
+    }
+    if (/^(Sales Qualified|Not Qualified|In Review)$/i.test(change.value)) {
+      counts.Completed += 1;
+    } else if (/^Booked a Meeting$/i.test(change.value) && !change.previousValue) {
+      counts["New Meeting"] += 1;
+    } else if (/^Rescheduled$/i.test(change.value)) {
+      counts.Rescheduled += 1;
+    } else if (/^No[\s-]?Show$/i.test(change.value)) {
+      counts["No-show"] += 1;
+    } else if (/^Cancelled$/i.test(change.value)) {
+      counts.Cancelled += 1;
+    }
+  }
+  const period =
+    window.startDate === window.endDate
+      ? friendlyDate(window.startDate)
+      : `${friendlyDate(window.startDate)} to ${friendlyDate(window.endDate)}`;
+  return [
+    `From ${period}:`,
+    `- New Meeting: ${counts["New Meeting"]}`,
+    `- Completed: ${counts.Completed}`,
+    `- Rescheduled: ${counts.Rescheduled}`,
+    `- No-show: ${counts["No-show"]}`,
+    `- Cancelled: ${counts.Cancelled}`,
+  ].join("\n");
+}
+
+function sgtDate(value: string) {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: "Asia/Singapore",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(value));
 }
 
 function leadAddedDate(deal: SalesDeal) {

@@ -1,3 +1,9 @@
+import {
+  preserveAndParseMondayUpdates,
+  type MondayItemUpdate,
+  type ParsedSalesPulseUpdate,
+} from "./sales-pulse.ts";
+
 const MONDAY_API_URL = "https://api.monday.com/v2";
 
 export type SalesDeal = {
@@ -40,6 +46,17 @@ export type SalesDeal = {
   salesCallNotes: string;
   source: string;
   mondayUrl: string;
+  mondayUpdates?: MondayItemUpdate[];
+  salesPulseUpdates?: ParsedSalesPulseUpdate[];
+};
+
+export type MondayBoardActivityChange = {
+  itemId: string;
+  itemName: string;
+  columnTitle: string;
+  previousValue: string;
+  value: string;
+  createdAt: string;
 };
 
 type MondayRequest = {
@@ -162,10 +179,14 @@ export async function getBoardSnapshot(boardId: string) {
                   }
                 }
               }
-              updates(limit: 3) {
+              updates(limit: 10) {
                 id
                 body
                 created_at
+                creator {
+                  id
+                  name
+                }
               }
             }
           }
@@ -197,6 +218,84 @@ export async function getBoardSnapshot(boardId: string) {
   };
 }
 
+export async function getBoardActivityChanges({
+  boardId,
+  from,
+  to,
+}: {
+  boardId: string;
+  from: string;
+  to: string;
+}) {
+  if (!/^\d+$/.test(boardId)) {
+    throw new Error("Monday board ID must contain digits only.");
+  }
+
+  const data = await mondayRequest<{
+    boards: Array<{
+      activity_logs: Array<{
+        created_at: string;
+        data: string;
+      }>;
+    }>;
+  }>({
+    query: `
+      query SalesBoardActivity {
+        boards(ids: [${boardId}]) {
+          activity_logs(
+            from: ${JSON.stringify(new Date(from).toISOString())}
+            to: ${JSON.stringify(new Date(to).toISOString())}
+            limit: 10000
+          ) {
+            created_at
+            data
+          }
+        }
+      }
+    `,
+  });
+
+  return (data.boards[0]?.activity_logs || [])
+    .map(parseActivityChange)
+    .filter((change): change is MondayBoardActivityChange => Boolean(change));
+}
+
+function parseActivityChange(activity: {
+  created_at: string;
+  data: string;
+}): MondayBoardActivityChange | null {
+  try {
+    const data = JSON.parse(activity.data) as {
+      pulse_id?: string | number;
+      pulse_name?: string;
+      column_title?: string;
+      calculated_data?: {
+        previous_value?: Array<{ label?: { text?: string } }> | null;
+        value?: Array<{ label?: { text?: string } }> | null;
+      };
+    };
+    const itemId = String(data.pulse_id || "");
+    const columnTitle = data.column_title || "";
+    if (!itemId || !columnTitle) return null;
+
+    const timestamp = Number(activity.created_at);
+    const milliseconds =
+      timestamp > 10_000_000_000_000 ? timestamp / 10_000 : timestamp;
+
+    return {
+      itemId,
+      itemName: data.pulse_name || "",
+      columnTitle,
+      previousValue:
+        data.calculated_data?.previous_value?.[0]?.label?.text || "",
+      value: data.calculated_data?.value?.[0]?.label?.text || "",
+      createdAt: new Date(milliseconds).toISOString(),
+    };
+  } catch {
+    return null;
+  }
+}
+
 async function getNextItemsPage(cursor: string) {
   const data = await mondayRequest<{
     next_items_page: {
@@ -225,10 +324,14 @@ async function getNextItemsPage(cursor: string) {
                   }
                 }
               }
-            updates(limit: 3) {
+            updates(limit: 10) {
               id
               body
               created_at
+              creator {
+                id
+                name
+              }
             }
           }
         }
@@ -262,7 +365,7 @@ type MondayItem = {
     type: string;
     battery_value?: Array<{ key: string; count: number }> | null;
   }>;
-  updates?: Array<{ id: string; body: string; created_at: string }>;
+  updates?: MondayItemUpdate[];
 };
 
 const columns = {
@@ -305,6 +408,9 @@ function normalizeDeals(board: {
   );
 
   return board.items_page.items.map((item) => {
+    const { mondayUpdates, salesPulseUpdates } = preserveAndParseMondayUpdates(
+      item.updates,
+    );
     const valueFor = (columnId: string) => {
       const column = item.column_values.find((value) => value.id === columnId);
       if (!column) return "";
@@ -482,6 +588,8 @@ function normalizeDeals(board: {
           item.group?.title,
         ]) || "Unknown",
       mondayUrl: `https://nas-io.monday.com/boards/${board.id}/pulses/${item.id}`,
+      mondayUpdates,
+      salesPulseUpdates,
     } satisfies SalesDeal;
   });
 }
