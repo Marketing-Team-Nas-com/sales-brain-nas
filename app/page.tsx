@@ -130,7 +130,7 @@ function ScorecardPage({
             <h3 className="font-serif text-2xl font-semibold">Stage Snapshot</h3>
             <div className="mt-4 space-y-3 text-base">
               <Line label="Sales Qualified" value={daily.salesQualified} />
-              <Line label="In Review, not counted as SQL" value={daily.inReview} />
+              <Line label="Call Stage Pending (formerly In Review), not counted as SQL" value={daily.callStagePending} />
               <Line label="Booked meetings" value={daily.bookedMeetings} />
               <Line label="No-shows" value={daily.noShows} />
               <Line label="Cancelled" value={daily.cancelled} />
@@ -190,17 +190,18 @@ function ScorecardPage({
             <div>
               <h3 className="font-serif text-2xl font-semibold">The Math</h3>
               <p className="mt-3 text-lg leading-8">
-                We are not counting In Review as SQL. Resolved conversion includes
-                no-shows, reschedules, and cancellations, and excludes only pending calls.
+                We are not counting Call Stage Pending (formerly In Review) as SQL. Resolved
+                conversion includes no-shows, reschedules, and cancellations, and excludes only
+                booked meetings not held yet.
               </p>
               <div className="mt-5 space-y-3 text-base">
                 <Line label="Sales Qualified" value={rolling.salesQualified} />
-                <Line label="In Review, not counted as SQL" value={rolling.inReview} />
+                <Line label="Call Stage Pending (formerly In Review), not counted as SQL" value={rolling.callStagePending} />
                 <Line label="No-shows" value={rolling.noShows} />
                 <Line label="Not Qualified" value={rolling.notQualified} />
                 <Line label="Rescheduled" value={rolling.rescheduled} />
                 <Line label="Cancelled" value={rolling.cancelled} />
-                <Line label="Pending calls" value={rolling.bookedMeetings} />
+                <Line label="Booked meetings, not held yet" value={rolling.bookedMeetings} />
               </div>
             </div>
 
@@ -212,7 +213,7 @@ function ScorecardPage({
                 {percent(rolling.sqlRate)}
               </p>
               <p className="mt-2 text-base leading-7">
-                SQL rate excluding In Review, including no-shows, reschedules, and cancellations.
+                SQL rate excluding Call Stage Pending (formerly In Review), including no-shows, reschedules, and cancellations.
               </p>
 
               <div className="mt-6 border-t border-[#171717] pt-5">
@@ -349,7 +350,7 @@ function dailyOneLine(daily: ScorecardRange, previousDaily: ScorecardRange) {
 function rollingTakeaway(rolling: ScorecardRange, previousRolling: ScorecardRange) {
   const cpaTone = deltaTone(rolling.projectedQualifiedCpa, previousRolling.projectedQualifiedCpa, true);
   if (cpaTone === "good") {
-    return `The rolling week is improving on projected qualified CPA, moving from about ${money(previousRolling.projectedQualifiedCpa)} to ${money(rolling.projectedQualifiedCpa)}. Keep spend steady, reduce no-shows, and let pending calls resolve before scaling harder.`;
+    return `The rolling week is improving on projected qualified CPA, moving from about ${money(previousRolling.projectedQualifiedCpa)} to ${money(rolling.projectedQualifiedCpa)}. Keep spend steady, reduce no-shows, and let booked meetings get held before scaling harder.`;
   }
   if (cpaTone === "bad") {
     return `The rolling week is getting more expensive on projected qualified CPA, moving from about ${money(previousRolling.projectedQualifiedCpa)} to ${money(rolling.projectedQualifiedCpa)}. Check Agent-Fit quality, show rate, and whether spend is drifting into weaker traffic.`;
