@@ -1,3 +1,8 @@
+import {
+  CALL_STAGE_PENDING_DISPLAY,
+  isCallStagePending,
+  mentionsCallStagePending,
+} from "./call-stage";
 import type { SalesDeal } from "./monday";
 import type { ConversationMessage, SalesContextNote } from "./sales-memory";
 
@@ -183,7 +188,7 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
     const meetingDateFilter = requestedMeetingDateFilter(normalized, dateRange, singleCallDate);
     const matches = salesCrmDeals(deals)
       .filter((deal) => deal.qualification === "Fit")
-      .filter((deal) => ["Sales Qualified", "In Review"].includes(deal.callStage))
+      .filter((deal) => deal.callStage === "Sales Qualified" || isCallStagePending(deal.callStage))
       .filter(isHappenedCall)
       .filter((deal) => !ownerFilter || ownerMatches(deal, ownerFilter))
       .filter((deal) => !countryFilter || countryMatches(deal, countryFilter))
@@ -213,16 +218,16 @@ function deterministicSalesAnswer(question: string, deals: SalesDeal[]) {
     ].filter(Boolean);
     const scope = filters.length ? ` ${filters.join(", ")}` : "";
     const salesQualifiedMatches = matches.filter((deal) => deal.callStage === "Sales Qualified");
-    const inReviewMatches = matches.filter((deal) => deal.callStage === "In Review");
+    const callStagePendingMatches = matches.filter((deal) => isCallStagePending(deal.callStage));
 
     if (!matches.length) {
-      return `I do not see any${scope} Fit leads with a happened call that are Sales Qualified or In Review.`;
+      return `I do not see any${scope} Fit leads with a happened call that are Sales Qualified or ${CALL_STAGE_PENDING_DISPLAY}.`;
     }
 
     return [
-      `I found ${matches.length}${scope} Fit leads with a happened call that are Sales Qualified or In Review:`,
+      `I found ${matches.length}${scope} Fit leads with a happened call that are Sales Qualified or ${CALL_STAGE_PENDING_DISPLAY}:`,
       `- Sales Qualified: ${salesQualifiedMatches.length}`,
-      `- In Review: ${inReviewMatches.length}`,
+      `- ${CALL_STAGE_PENDING_DISPLAY}: ${callStagePendingMatches.length}`,
       ...matches.slice(0, 30).map(formatReviewableFitCallLine),
       matches.length > 30 ? `And ${matches.length - 30} more.` : "",
     ]
@@ -659,6 +664,7 @@ async function askOpenAI({
                 "Do not use markdown formatting, bold text, code ticks, bullet points, or CRM jargon unless the user asks for a detailed report.",
                 "Say 'sales qualified' instead of 'Call Stage = Sales Qualified' unless the exact field name matters.",
                 "When the user asks how many calls are coming up, upcoming calls, or booked calls, count only CRM records where callStage is 'Booked a Meeting' and firstMeetingDate is today or later in Asia/Singapore.",
+                "callStage 'Pending' is the renamed 'In Review' stage; treat both labels as the same stage, call it Call Stage Pending (formerly In Review), and never count it as sales qualified, booked, or upcoming.",
                 "When giving details about specific calls or meetings, always include the company website when it is present in the CRM and label times as SGT.",
                 "When listing calls, use a clean block per company: Company, Time, Website, Budget, Agent notes. Put Agent notes from the monday Agent notes column first if it exists.",
                 "When the user mentions CMO dinner, dinner leads, Miami dinner, Singapore dinner, or Tel Aviv, use only the CMO Dinner board records. In this CRM summary those are in crmSummary.cmoDinner.",
@@ -1149,7 +1155,7 @@ function asksForFitHappenedCallsForReview(normalizedQuestion: string) {
     /\b(happened|had|taken|took|completed|done)\b/.test(normalizedQuestion);
   const mentionsReviewableOutcome =
     /\b(sales qualified|qualified|sql)\b/.test(normalizedQuestion) &&
-    /\b(in review|review)\b/.test(normalizedQuestion);
+    mentionsCallStagePending(normalizedQuestion);
 
   return asksForList && mentionsFit && mentionsHappenedCall && mentionsReviewableOutcome;
 }

@@ -1,3 +1,5 @@
+import { CALL_STAGE_PENDING_LABELS, countCallStagePending } from "./call-stage";
+
 const sheetCsvUrl =
   "https://docs.google.com/spreadsheets/d/1OwqUo_S66hv8wG259ioXvc9DpSnVDGwLLeWM_pwtIos/export?format=csv&gid=0";
 
@@ -11,7 +13,7 @@ export type ScorecardRange = {
   callActivity: number;
   callCpa: number | null;
   salesQualified: number;
-  inReview: number;
+  callStagePending: number;
   bookedMeetings: number;
   noShows: number;
   notQualified: number;
@@ -84,7 +86,7 @@ async function buildRange({
   const callActivity = countStages(sheet.allByStage, [
     "Sales Qualified",
     "Not Qualified",
-    "In Review",
+    ...CALL_STAGE_PENDING_LABELS,
     "No Show",
     "Rescheduled",
     "Booked a Meeting",
@@ -92,7 +94,7 @@ async function buildRange({
   ]);
   const callCpa = cost(spend, callActivity);
   const salesQualified = sheet.allByStage["Sales Qualified"] || 0;
-  const inReview = sheet.allByStage["In Review"] || 0;
+  const callStagePending = countCallStagePending(sheet.allByStage);
   const bookedMeetings = sheet.allByStage["Booked a Meeting"] || 0;
   const noShows = sheet.allByStage["No Show"] || 0;
   const notQualified = sheet.allByStage["Not Qualified"] || 0;
@@ -113,7 +115,7 @@ async function buildRange({
     callActivity,
     callCpa,
     salesQualified,
-    inReview,
+    callStagePending,
     bookedMeetings,
     noShows,
     notQualified,
