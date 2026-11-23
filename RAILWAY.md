@@ -39,7 +39,7 @@ SALES_BRAIN_MEMORY_DIR=/data/sales-brain
 SALES_BRAIN_ENABLE_SCHEDULER=true
 ```
 
-The internal scheduler starts from the healthcheck and crawls monday every 10 minutes. You can also trigger a protected crawl manually:
+The internal scheduler starts from the healthcheck and crawls monday every 10 minutes by default. Set `SALES_BRAIN_CRAWL_INTERVAL_MINUTES` (whole minutes, 5–1440) to crawl less often; invalid values fall back to 10. You can also trigger a protected crawl manually:
 
 ```text
 POST https://YOUR_RAILWAY_DOMAIN/api/memory/crawl
