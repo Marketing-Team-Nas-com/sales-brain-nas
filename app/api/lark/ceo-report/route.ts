@@ -6,7 +6,7 @@ import {
   sendLarkTextReport,
 } from "../../../lib/lark";
 import { buildCeoSalesReport } from "../../../lib/ceo-report";
-import { getLatestSalesMemory, getRecentSalesMemoryChanges } from "../../../lib/sales-memory";
+import { getLatestSalesMemory, getReportableSalesMemoryChanges } from "../../../lib/sales-memory";
 
 type ReportRequest = {
   chatId?: string;
@@ -25,7 +25,7 @@ export async function POST(request: NextRequest) {
   }
 
   try {
-    const recentChanges = await getRecentSalesMemoryChanges(100);
+    const recentChanges = await getReportableSalesMemoryChanges(100);
     const report = buildCeoSalesReport({ snapshot, recentChanges });
     const document = await createLarkDocument({ title: report.title });
 

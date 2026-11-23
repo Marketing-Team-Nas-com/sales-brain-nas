@@ -9,7 +9,7 @@ import {
   crawlSalesMemory,
   getConfiguredSalesBoardIds,
   getLatestSalesMemory,
-  getRecentSalesMemoryChanges,
+  getReportableSalesMemoryChanges,
 } from "./sales-memory";
 
 export async function createTwiceWeeklySalesReport({
@@ -28,7 +28,7 @@ export async function createTwiceWeeklySalesReport({
     throw new Error("No Sales Brain memory snapshot has been crawled yet.");
   }
 
-  const recentChanges = await getRecentSalesMemoryChanges(180);
+  const recentChanges = await getReportableSalesMemoryChanges(180);
   const report = buildCeoSalesReport({ snapshot, recentChanges });
 
   if (previewOnly) {

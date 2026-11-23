@@ -13,7 +13,7 @@ import {
   crawlSalesMemory,
   getConfiguredSalesBoardIds,
   getLatestSalesMemory,
-  getRecentSalesMemoryChanges,
+  getReportableSalesMemoryChanges,
   getSalesContextNotes,
 } from "./sales-memory";
 
@@ -52,7 +52,7 @@ export async function createDailyNewspaperReport({
   }
 
   const today = singaporeDateKey();
-  const recentChanges = (await getRecentSalesMemoryChanges(300)).filter(
+  const recentChanges = (await getReportableSalesMemoryChanges(300)).filter(
     (change) => singaporeDateKey(change.crawledAt) === today,
   );
   const contextNotes = (await getSalesContextNotes(250)).filter(
