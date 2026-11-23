@@ -314,3 +314,29 @@ test("crawl interval reads SALES_BRAIN_CRAWL_INTERVAL_MINUTES from the environme
     else process.env.SALES_BRAIN_CRAWL_INTERVAL_MINUTES = previous;
   }
 });
+
+test("does not retry monday's daily limit or an over-max-complexity query", async () => {
+  const fatalResponses = [
+    () => jsonResponse(
+      { errors: [{ message: "Daily limit exceeded", extensions: { code: "DAILY_LIMIT_EXCEEDED", retry_in_seconds: 3600 } }] },
+      { status: 429 },
+    ),
+    () => jsonResponse({
+      errors: [
+        {
+          message: "Query has complexity of 6000000, which exceeds max complexity of 5000000",
+          extensions: { code: "maxComplexityExceeded" },
+        },
+      ],
+    }),
+  ];
+
+  for (const response of fatalResponses) {
+    const calls = fakeFetch([response]);
+    const { delays, sleep } = noSleep();
+
+    await assert.rejects(mondayRequest({ query: "{ me { id } }" }, { sleep }));
+    assert.equal(calls.length, 1);
+    assert.equal(delays.length, 0);
+  }
+});
