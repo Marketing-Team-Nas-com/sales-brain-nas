@@ -83,7 +83,7 @@ export function diffSnapshots(
   const baseline: SalesMemoryChange[] = [];
   const previousById = new Map(previous.deals.map((deal) => [dealKey(deal), deal]));
   const currentById = new Map(current.deals.map((deal) => [dealKey(deal), deal]));
-  const knownBoards = new Set(previous.deals.map(boardKey));
+  const knownBoards = knownBoardIds(previous);
   const baselineBoards = new Set<string>();
 
   for (const deal of current.deals) {
@@ -180,6 +180,19 @@ export function excludeBaselineCreatedChanges(
     if (baselineCrawls.has(change.crawledAt)) return false;
     return (createdPerCrawl.get(change.crawledAt) || 0) < MASS_CREATED_THRESHOLD;
   });
+}
+
+// Boards the previous crawl actually read. A board counts as known when its id
+// is in the previous snapshot's board list, even if it had zero deals then, so
+// its first real deal is still logged as `created`. Deal board ids and the
+// primary board are included for older snapshots without a `boards` list.
+function knownBoardIds(previous: SalesMemorySnapshot) {
+  const ids = new Set(previous.deals.map(boardKey));
+  for (const board of previous.boards || []) {
+    if (board?.id) ids.add(String(board.id));
+  }
+  if (previous.board?.id) ids.add(String(previous.board.id));
+  return ids;
 }
 
 function uniqueBoardIds(deals: SalesDeal[]) {

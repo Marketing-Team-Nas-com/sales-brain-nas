@@ -26,8 +26,14 @@ function deal(id, boardId, overrides = {}) {
   };
 }
 
-function snapshot(generatedAt, deals) {
-  return { id: generatedAt, generatedAt, board: { id: BOARD_A, name: "Sales" }, deals };
+function snapshot(generatedAt, deals, boardIds) {
+  return {
+    id: generatedAt,
+    generatedAt,
+    board: { id: BOARD_A, name: "Sales" },
+    ...(boardIds ? { boards: boardIds.map((id) => ({ id, name: `Board ${id}` })) } : {}),
+    deals,
+  };
 }
 
 const crawl1 = "2026-11-20T01:00:00.000Z";
@@ -63,6 +69,31 @@ test("a board seen for the first time does not log every item as created", () =>
   assert.deepEqual(diff.changes, []);
   assert.equal(diff.baseline.length, 250);
   assert.deepEqual(diff.baselineBoardIds, [BOARD_B]);
+});
+
+test("a newly configured board absent from the previous board list is a baseline", () => {
+  const previous = snapshot(crawl1, [deal("1", BOARD_A)], [BOARD_A]);
+  const boardBDeals = Array.from({ length: 30 }, (_, i) => deal(`b${i}`, BOARD_B));
+  const diff = diffSnapshots(previous, snapshot(crawl2, [deal("1", BOARD_A), ...boardBDeals], [BOARD_A, BOARD_B]));
+
+  assert.deepEqual(diff.changes, []);
+  assert.equal(diff.baseline.length, 30);
+  assert.deepEqual(diff.baselineBoardIds, [BOARD_B]);
+});
+
+test("a known board that had zero deals last crawl still logs its first real deal", () => {
+  // Board B was read last crawl (it is in the board list) but had no items.
+  const previous = snapshot(crawl2, [deal("1", BOARD_A)], [BOARD_A, BOARD_B]);
+  const current = snapshot(crawl3, [deal("1", BOARD_A), deal("b1", BOARD_B)], [BOARD_A, BOARD_B]);
+  const diff = diffSnapshots(previous, current);
+
+  assert.deepEqual(diff.baseline, []);
+  assert.deepEqual(diff.baselineBoardIds, []);
+  assert.equal(diff.changes.length, 1);
+  assert.equal(diff.changes[0].field, "created");
+  assert.equal(diff.changes[0].boardId, BOARD_B);
+  assert.equal(diff.changes[0].itemId, "b1");
+  assert.equal(diff.changes[0].baseline, undefined);
 });
 
 test("after a good baseline, a real new deal logs exactly one created row", () => {
@@ -171,6 +202,61 @@ test("baseline crawls are detected from the crawl log", () => {
     [...baselineCrawlTimestamps(crawls)].sort(),
     ["first", "legacy-flood", "tagged"],
   );
+});
+
+test("leftover Nov 18 live rows are hidden; later real activity is kept", () => {
+  // Mirrors the live volume: the first successful crawl on Nov 18 logged every
+  // deal as `created` with one shared timestamp, before this guard existed.
+  const nov18 = "2026-11-18T06:47:12.000Z";
+  const later = ["2026-11-20T01:00:00.000Z", "2026-11-20T01:10:00.000Z"];
+  const legacy = Array.from({ length: 4600 }, (_, i) => ({
+    crawledAt: nov18,
+    boardId: i % 2 ? BOARD_A : BOARD_B,
+    itemId: `${i}`,
+    account: `Legacy ${i}`,
+    field: "created",
+    after: "New",
+  }));
+  const realActivity = [
+    { crawledAt: later[0], boardId: BOARD_A, itemId: "new-1", account: "Real Lead", field: "created", after: "New" },
+    { crawledAt: later[0], boardId: BOARD_A, itemId: "7", account: "Legacy 7", field: "callStage", before: "Pending", after: "Booked" },
+    { crawledAt: later[1], boardId: BOARD_B, itemId: "new-2", account: "Real Lead 2", field: "created", after: "New" },
+    { crawledAt: later[1], boardId: BOARD_B, itemId: "8", account: "Legacy 8", field: "removed", before: "New" },
+  ];
+  const crawlLog = [
+    { generatedAt: nov18, totalRecords: 4600, changeCount: 4600 },
+    { generatedAt: later[0], totalRecords: 4601, changeCount: 2 },
+    { generatedAt: later[1], totalRecords: 4601, changeCount: 2 },
+  ];
+  const all = [...legacy, ...realActivity];
+
+  // Same path as getReportableSalesMemoryChanges(180).
+  const reportable = excludeBaselineCreatedChanges(all, baselineCrawlTimestamps(crawlLog)).slice(-180);
+  assert.deepEqual(reportable, realActivity);
+
+  // Still hidden if crawls.jsonl is missing or does not flag the crawl.
+  assert.deepEqual(excludeBaselineCreatedChanges(all), realActivity);
+
+  // Field changes and removals in the legacy crawl itself are never dropped.
+  const legacyEdit = { crawledAt: nov18, itemId: "1", account: "Legacy 1", field: "owner", before: "a", after: "b" };
+  assert.deepEqual(
+    excludeBaselineCreatedChanges([...legacy, legacyEdit], baselineCrawlTimestamps(crawlLog)),
+    [legacyEdit],
+  );
+});
+
+test("ordinary new leads after a good baseline are not hidden by the filter", () => {
+  const crawlLog = [
+    { generatedAt: crawl1, totalRecords: 4600, changeCount: 0, baseline: true },
+    { generatedAt: crawl2, totalRecords: 4640, changeCount: 40 },
+    { generatedAt: crawl3, totalRecords: 4740, changeCount: MASS_CREATED_THRESHOLD - 1 },
+  ];
+  const rows = [
+    ...Array.from({ length: 40 }, (_, i) => ({ crawledAt: crawl2, itemId: `a${i}`, account: "A", field: "created" })),
+    ...Array.from({ length: MASS_CREATED_THRESHOLD - 1 }, (_, i) => ({ crawledAt: crawl3, itemId: `b${i}`, account: "B", field: "created" })),
+  ];
+
+  assert.equal(excludeBaselineCreatedChanges(rows, baselineCrawlTimestamps(crawlLog)).length, rows.length);
 });
 
 test("reports read baseline-filtered changes, not the raw log", async () => {
