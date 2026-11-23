@@ -2,6 +2,12 @@ import { mkdir, readFile, rename, writeFile, appendFile, unlink, open } from "no
 import path from "node:path";
 import type { SalesDeal } from "./monday";
 import { getBoardSnapshot } from "./monday";
+import {
+  baselineCrawlTimestamps,
+  diffSnapshots,
+  excludeBaselineCreatedChanges,
+} from "./first-crawl-guard";
+import type { CrawlLogEntry, SnapshotDiff } from "./first-crawl-guard";
 
 export type SalesMemorySnapshot = {
   id: string;
@@ -43,6 +49,9 @@ export type SalesMemoryChange = {
   field: keyof SalesDeal | "created" | "removed";
   before?: string;
   after?: string;
+  // Set on `created` rows that are part of a first-crawl / first-board
+  // baseline. Those rows go to changes.baseline.jsonl, not changes.jsonl.
+  baseline?: true;
 };
 
 export type ConversationMessage = {
@@ -101,23 +110,6 @@ export type SalesContextNote = {
   email?: string;
 };
 
-const trackedFields: Array<keyof SalesDeal> = [
-  "owner",
-  "email",
-  "qualification",
-  "initialOutreach",
-  "callStage",
-  "nextStepsStatus",
-  "finalVerdict",
-  "firstMeetingDate",
-  "latestMeetingDate",
-  "lastFollowUpDate",
-  "budget",
-  "agentNotes",
-  "salesCallNotes",
-  "followUp",
-];
-
 let activeCrawl: Promise<SalesMemorySnapshot> | null = null;
 
 export function getConfiguredSalesBoardIds() {
@@ -166,6 +158,35 @@ export async function getRecentSalesMemoryChanges(limit = 100) {
       .filter(Boolean)
       .slice(-limit)
       .map((line) => JSON.parse(line) as SalesMemoryChange);
+  } catch {
+    return [];
+  }
+}
+
+// Change rows that are safe for reports: first-crawl / first-board baseline
+// `created` rows are dropped (including untagged legacy ones already on disk),
+// then the last `limit` rows are returned. Field changes and removals are
+// never dropped.
+export async function getReportableSalesMemoryChanges(limit = 100) {
+  const all = await getRecentSalesMemoryChanges(Number.MAX_SAFE_INTEGER);
+  const baselineCrawls = baselineCrawlTimestamps(await getCrawlLog());
+  return excludeBaselineCreatedChanges(all, baselineCrawls).slice(-limit);
+}
+
+async function getCrawlLog() {
+  try {
+    const raw = await readFile(memoryPath("crawls.jsonl"), "utf8");
+    return raw
+      .trim()
+      .split("\n")
+      .filter(Boolean)
+      .flatMap((line) => {
+        try {
+          return [JSON.parse(line) as CrawlLogEntry];
+        } catch {
+          return [];
+        }
+      });
   } catch {
     return [];
   }
@@ -316,8 +337,8 @@ async function crawlAndStore(boardIds: string[]) {
     deals,
   };
 
-  const changes = diffSnapshots(previous, snapshot);
-  await writeSnapshot(snapshot, changes);
+  const diff = diffSnapshots(previous, snapshot);
+  await writeSnapshot(snapshot, diff);
   return snapshot;
 }
 
@@ -340,79 +361,8 @@ function buildSummary(deals: SalesDeal[]): SalesMemorySummary {
   };
 }
 
-function diffSnapshots(
-  previous: SalesMemorySnapshot | null,
-  current: SalesMemorySnapshot,
-): SalesMemoryChange[] {
-  if (!previous) {
-    return current.deals.map((deal) => ({
-      crawledAt: current.generatedAt,
-      boardId: deal.boardId,
-      itemId: deal.id,
-      account: deal.account,
-      field: "created",
-      after: deal.stage,
-    }));
-  }
-
-  const changes: SalesMemoryChange[] = [];
-  const previousById = new Map(previous.deals.map((deal) => [dealKey(deal), deal]));
-  const currentById = new Map(current.deals.map((deal) => [dealKey(deal), deal]));
-
-  for (const deal of current.deals) {
-    const before = previousById.get(dealKey(deal));
-
-    if (!before) {
-      changes.push({
-        crawledAt: current.generatedAt,
-        boardId: deal.boardId,
-        itemId: deal.id,
-        account: deal.account,
-        field: "created",
-        after: deal.stage,
-      });
-      continue;
-    }
-
-    for (const field of trackedFields) {
-      const oldValue = stringifyDealValue(before[field]);
-      const newValue = stringifyDealValue(deal[field]);
-
-      if (oldValue !== newValue) {
-        changes.push({
-          crawledAt: current.generatedAt,
-          boardId: deal.boardId,
-          itemId: deal.id,
-          account: deal.account,
-          field,
-          before: oldValue,
-          after: newValue,
-        });
-      }
-    }
-  }
-
-  for (const deal of previous.deals) {
-    if (!currentById.has(dealKey(deal))) {
-      changes.push({
-        crawledAt: current.generatedAt,
-        boardId: deal.boardId,
-        itemId: deal.id,
-        account: deal.account,
-        field: "removed",
-        before: deal.stage,
-      });
-    }
-  }
-
-  return changes;
-}
-
-function dealKey(deal: SalesDeal) {
-  return `${deal.boardId || "unknown"}:${deal.id}`;
-}
-
-async function writeSnapshot(snapshot: SalesMemorySnapshot, changes: SalesMemoryChange[]) {
+async function writeSnapshot(snapshot: SalesMemorySnapshot, diff: SnapshotDiff) {
+  const { changes, baseline } = diff;
   const dir = memoryDir();
   await mkdir(dir, { recursive: true });
 
@@ -426,6 +376,9 @@ async function writeSnapshot(snapshot: SalesMemorySnapshot, changes: SalesMemory
     generatedAt: snapshot.generatedAt,
     totalRecords: snapshot.summary.totalRecords,
     changeCount: changes.length,
+    baseline: diff.isFirstSnapshot,
+    baselineCount: baseline.length,
+    baselineBoardIds: diff.baselineBoardIds,
     summary: snapshot.summary,
   };
 
@@ -437,6 +390,14 @@ async function writeSnapshot(snapshot: SalesMemorySnapshot, changes: SalesMemory
       `${changes.map((change) => JSON.stringify(change)).join("\n")}\n`,
     );
   }
+
+  // Baseline rows are kept for debugging only. Reports never read this file.
+  if (baseline.length) {
+    await appendFile(
+      memoryPath("changes.baseline.jsonl"),
+      `${baseline.map((change) => JSON.stringify(change)).join("\n")}\n`,
+    );
+  }
 }
 
 function countBy<T>(items: T[], keyFor: (item: T) => string) {
@@ -445,11 +406,6 @@ function countBy<T>(items: T[], keyFor: (item: T) => string) {
     counts[key] = (counts[key] || 0) + 1;
     return counts;
   }, {});
-}
-
-function stringifyDealValue(value: unknown) {
-  if (value === undefined || value === null) return "";
-  return String(value);
 }
 
 function memoryPath(fileName: string) {

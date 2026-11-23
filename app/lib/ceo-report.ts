@@ -1,6 +1,7 @@
 import type { SalesDeal } from "./monday";
 import type { SalesMemoryChange, SalesMemorySnapshot } from "./sales-memory";
 import type { LarkReportBlock } from "./lark";
+import { excludeBaselineCreatedChanges } from "./first-crawl-guard";
 
 type PipelineSet = {
   signed: SalesDeal[];
@@ -328,8 +329,10 @@ function dinnerMarket(deal: SalesDeal) {
 }
 
 function newEnterpriseSignals(deals: SalesDeal[], changes: SalesMemoryChange[]) {
+  // Belt-and-suspenders: callers already pass reportable changes, but a
+  // first-crawl baseline must never be read as a wave of new leads.
   const createdIds = new Set(
-    changes
+    excludeBaselineCreatedChanges(changes)
       .filter((change) => change.field === "created")
       .map((change) => change.itemId),
   );
