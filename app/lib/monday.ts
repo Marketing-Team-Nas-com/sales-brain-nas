@@ -47,66 +47,208 @@ type MondayRequest = {
   variables?: Record<string, unknown>;
 };
 
-export async function mondayRequest<T>({
-  query,
-  variables,
-}: MondayRequest): Promise<T> {
+// Transient server errors keep the original policy (3 attempts, 500ms then 1s).
+// Rate-limit / complexity errors get more patience with exponential backoff,
+// because the shared monday token can be exhausted by other services too.
+const TRANSIENT_MAX_ATTEMPTS = 3;
+const TRANSIENT_BASE_DELAY_MS = 500;
+const RATE_LIMIT_MAX_ATTEMPTS = 4;
+const RATE_LIMIT_BASE_DELAY_MS = 2_000;
+const RATE_LIMIT_MAX_DELAY_MS = 30_000;
+
+type MondayGraphQLError = {
+  message: string;
+  extensions?: {
+    code?: string;
+    retry_in_seconds?: number;
+    status_code?: number;
+  };
+};
+
+export type MondayErrorKind = "rate_limit" | "transient" | "fatal";
+
+export function classifyMondayError({
+  status,
+  message = "",
+  code = "",
+}: {
+  status?: number;
+  message?: string;
+  code?: string;
+}): MondayErrorKind {
+  const text = `${code} ${message}`;
+
+  // A daily cap will not reset within any sensible backoff window.
+  if (/daily_limit_exceeded|daily limit/i.test(text)) return "fatal";
+  // A single query that is too expensive will fail the same way every time.
+  if (/maxcomplexityexceeded|exceeds max complexity/i.test(text)) return "fatal";
+
+  if (
+    status === 429 ||
+    /complexity|rate.?limit|too many requests|max.?concurrency|concurrency limit|minute limit/i.test(text)
+  ) {
+    return "rate_limit";
+  }
+
+  if (
+    (status !== undefined && status >= 500) ||
+    /internal server error|timeout|fetch failed|temporarily/i.test(text)
+  ) {
+    return "transient";
+  }
+
+  return "fatal";
+}
+
+// Seconds monday asks us to wait, from extensions.retry_in_seconds, the
+// Retry-After header, or a "reset in N seconds" complexity message.
+export function mondayRetryHintSeconds({
+  retryInSeconds,
+  retryAfterHeader,
+  message = "",
+}: {
+  retryInSeconds?: number;
+  retryAfterHeader?: string | null;
+  message?: string;
+}) {
+  if (typeof retryInSeconds === "number" && Number.isFinite(retryInSeconds) && retryInSeconds > 0) {
+    return retryInSeconds;
+  }
+
+  const header = Number(retryAfterHeader);
+  if (retryAfterHeader && Number.isFinite(header) && header > 0) return header;
+
+  const reset = message.match(/reset in (\d+(?:\.\d+)?) seconds?/i)?.[1];
+  if (reset) return Number(reset);
+
+  return undefined;
+}
+
+export function mondayRetryDelayMs({
+  kind,
+  attempt,
+  hintSeconds,
+  jitterMs = Math.floor(Math.random() * 250),
+}: {
+  kind: Exclude<MondayErrorKind, "fatal">;
+  attempt: number;
+  hintSeconds?: number;
+  jitterMs?: number;
+}) {
+  if (kind === "transient") {
+    return TRANSIENT_BASE_DELAY_MS * 2 ** (attempt - 1);
+  }
+
+  const backoff = RATE_LIMIT_BASE_DELAY_MS * 2 ** (attempt - 1);
+  const hint = hintSeconds ? hintSeconds * 1000 : 0;
+  return Math.min(RATE_LIMIT_MAX_DELAY_MS, Math.max(backoff, hint)) + jitterMs;
+}
+
+class MondayRequestError extends Error {
+  readonly kind: MondayErrorKind;
+  readonly hintSeconds?: number;
+
+  constructor(message: string, kind: MondayErrorKind, hintSeconds?: number) {
+    super(message);
+    this.kind = kind;
+    this.hintSeconds = hintSeconds;
+  }
+}
+
+export async function mondayRequest<T>(
+  { query, variables }: MondayRequest,
+  { sleep: wait = sleep }: { sleep?: (ms: number) => Promise<unknown> } = {},
+): Promise<T> {
   const token = process.env.MONDAY_API_TOKEN;
 
   if (!token) {
     throw new Error("MONDAY_API_TOKEN is not configured.");
   }
 
-  let lastError: Error | null = null;
+  for (let attempt = 1; ; attempt += 1) {
+    let error: MondayRequestError;
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
     try {
-      const response = await fetch(MONDAY_API_URL, {
-        method: "POST",
-        headers: {
-          Authorization: token,
-          "Content-Type": "application/json",
-          "API-Version": "2026-04",
-        },
-        body: JSON.stringify({ query, variables }),
-      });
-
-      const payload = (await response.json()) as {
-        data?: T;
-        errors?: Array<{ message: string }>;
-      };
-
-      if (!response.ok || payload.errors?.length) {
-        const message = payload.errors?.[0]?.message ?? "monday API request failed.";
-        const retryable = response.status >= 500 || /internal server error|timeout|temporarily/i.test(message);
-
-        if (retryable && attempt < 3) {
-          lastError = new Error(message);
-          await sleep(500 * attempt);
-          continue;
-        }
-
-        throw new Error(message);
-      }
-
-      if (!payload.data) {
-        throw new Error("monday API returned no data.");
-      }
-
-      return payload.data;
-    } catch (error) {
-      lastError = error instanceof Error ? error : new Error("monday API request failed.");
-
-      if (attempt < 3 && /internal server error|timeout|fetch failed|temporarily/i.test(lastError.message)) {
-        await sleep(500 * attempt);
-        continue;
-      }
-
-      throw lastError;
+      return await sendMondayRequest<T>(token, { query, variables });
+    } catch (caught) {
+      error =
+        caught instanceof MondayRequestError
+          ? caught
+          : new MondayRequestError(
+              caught instanceof Error ? caught.message : "monday API request failed.",
+              classifyMondayError({
+                message: caught instanceof Error ? caught.message : "",
+              }),
+            );
     }
+
+    const maxAttempts =
+      error.kind === "rate_limit"
+        ? RATE_LIMIT_MAX_ATTEMPTS
+        : error.kind === "transient"
+          ? TRANSIENT_MAX_ATTEMPTS
+          : 1;
+
+    if (error.kind === "fatal" || attempt >= maxAttempts) {
+      throw new Error(error.message);
+    }
+
+    const delay = mondayRetryDelayMs({ kind: error.kind, attempt, hintSeconds: error.hintSeconds });
+    if (error.kind === "rate_limit") {
+      console.warn(
+        `monday rate limit hit (attempt ${attempt}/${maxAttempts}); retrying in ${Math.round(delay / 1000)}s: ${error.message}`,
+      );
+    }
+    await wait(delay);
+  }
+}
+
+async function sendMondayRequest<T>(token: string, { query, variables }: MondayRequest) {
+  const response = await fetch(MONDAY_API_URL, {
+    method: "POST",
+    headers: {
+      Authorization: token,
+      "Content-Type": "application/json",
+      "API-Version": "2026-04",
+    },
+    body: JSON.stringify({ query, variables }),
+  });
+
+  const raw = await response.text();
+  let payload: {
+    data?: T;
+    errors?: MondayGraphQLError[];
+    error_message?: string;
+    error_code?: string;
+  } = {};
+  try {
+    payload = raw ? JSON.parse(raw) : {};
+  } catch {}
+
+  if (!response.ok || payload.errors?.length || payload.error_message) {
+    const firstError = payload.errors?.[0];
+    const message =
+      firstError?.message ||
+      payload.error_message ||
+      (response.ok ? "monday API request failed." : `monday API request failed (HTTP ${response.status}).`);
+    const code = firstError?.extensions?.code || payload.error_code || "";
+
+    throw new MondayRequestError(
+      message,
+      classifyMondayError({ status: response.status, message, code }),
+      mondayRetryHintSeconds({
+        retryInSeconds: firstError?.extensions?.retry_in_seconds,
+        retryAfterHeader: response.headers.get("retry-after"),
+        message,
+      }),
+    );
   }
 
-  throw lastError ?? new Error("monday API request failed.");
+  if (!payload.data) {
+    throw new MondayRequestError("monday API returned no data.", "fatal");
+  }
+
+  return payload.data;
 }
 
 function sleep(ms: number) {
@@ -161,11 +303,6 @@ export async function getBoardSnapshot(boardId: string) {
                     count
                   }
                 }
-              }
-              updates(limit: 3) {
-                id
-                body
-                created_at
               }
             }
           }
@@ -225,11 +362,6 @@ async function getNextItemsPage(cursor: string) {
                   }
                 }
               }
-            updates(limit: 3) {
-              id
-              body
-              created_at
-            }
           }
         }
       }
@@ -262,7 +394,6 @@ type MondayItem = {
     type: string;
     battery_value?: Array<{ key: string; count: number }> | null;
   }>;
-  updates?: Array<{ id: string; body: string; created_at: string }>;
 };
 
 const columns = {

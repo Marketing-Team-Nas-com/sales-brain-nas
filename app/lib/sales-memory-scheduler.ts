@@ -1,15 +1,15 @@
+import { getCrawlIntervalMinutes } from "./crawl-interval";
 import { crawlSalesMemory, getConfiguredSalesBoardIds } from "./sales-memory";
 
 declare global {
   var salesBrainMemoryScheduler:
     | {
         startedAt: string;
+        intervalMinutes: number;
         timer: NodeJS.Timeout;
       }
     | undefined;
 }
-
-const TEN_MINUTES = 10 * 60 * 1000;
 
 export function ensureSalesMemorySchedulerStarted() {
   if (process.env.SALES_BRAIN_ENABLE_SCHEDULER !== "true") {
@@ -21,6 +21,7 @@ export function ensureSalesMemorySchedulerStarted() {
       enabled: true,
       started: true,
       startedAt: globalThis.salesBrainMemoryScheduler.startedAt,
+      intervalMinutes: globalThis.salesBrainMemoryScheduler.intervalMinutes,
     };
   }
 
@@ -36,10 +37,12 @@ export function ensureSalesMemorySchedulerStarted() {
     });
   };
 
-  const timer = setInterval(run, TEN_MINUTES);
+  const intervalMinutes = getCrawlIntervalMinutes();
+  const timer = setInterval(run, intervalMinutes * 60 * 1000);
   timer.unref?.();
   globalThis.salesBrainMemoryScheduler = {
     startedAt: new Date().toISOString(),
+    intervalMinutes,
     timer,
   };
 
@@ -49,5 +52,6 @@ export function ensureSalesMemorySchedulerStarted() {
     enabled: true,
     started: true,
     startedAt: globalThis.salesBrainMemoryScheduler.startedAt,
+    intervalMinutes,
   };
 }
